@@ -1,3 +1,9 @@
+"""
+-------------------------------------------------------------------------------------------
+Trajectory preprocessing functions for filtering and interpolating ERA5 trajectories.
+-------------------------------------------------------------------------------------------
+"""
+
 from importlib import reload
 
 import sys
@@ -17,6 +23,160 @@ from gogoesgone.src.gogoesgone import processing as pr
 from gogoesgone.src.gogoesgone import zarr_access as za
 reload(pr)
 reload(za)
+
+
+def filter_out_loops(trajects):
+    """
+    Filters out trajectories with loops.
+
+    Input:
+    ---------------------------------------------------------------------------------------
+    - trajects    Dataset with trajectories (dimensions: N_Trajectories, Hours_Local_Time)
+
+    Output:
+    ---------------------------------------------------------------------------------------
+    - trajects_loop_free    Dataset containing trajectories without loops
+    - trajects_loop_cw      Dataset containing trajectories with clockwise loops
+    - trajects_loop_ccw     Dataset containing trajectories with counterclockwise loops
+    """
+    
+    # Initialize index lists
+    no_loops_idx = []
+    cw_loops_idx = []
+    ccw_loops_idx = []
+    
+    N_trajects = trajects.sizes['N_Trajectories']
+    
+    for i in range(N_trajects):
+        traject = trajects.isel(N_Trajectories=i).dropna(dim="Hours_Local_Time",how="all")
+        
+        # get lat lon tendencies
+        lat = traject.latitude.values
+        lon = traject.longitude.values
+        lat_tendency = np.diff(lat)
+        lon_tendency = np.diff(lon)
+        
+        # Sort trajectory index in one of the index lists
+        has_cw_rot = check_clockwise_rotation(lon_tendency,lat_tendency)
+                    
+        if has_cw_rot:
+            cw_loops_idx.append(i)
+        else:
+            has_ccw_rot = check_counterclockwise_rotation(lon_tendency,lat_tendency)
+
+            if has_ccw_rot:
+                ccw_loops_idx.append(i)
+            else:
+                no_loops_idx.append(i)
+                
+    # filter trajectories by index
+    trajects_loop_free = trajects.isel(N_Trajectories=no_loops_idx)
+    trajects_loop_cw = trajects.isel(N_Trajectories=cw_loops_idx)
+    trajects_loop_ccw = trajects.isel(N_Trajectories=ccw_loops_idx)
+
+    return trajects_loop_free, trajects_loop_cw, trajects_loop_ccw
+
+
+def check_clockwise_rotation(dx,dy):
+    """
+    Check if a clockwise rotation occurs from tendencies in 2D trajectory.
+
+    Input:
+    ---------------------------------------------------------------------------------------
+    - dx    Array of tendencies in x-direction 
+    - dy    Array of tendencies in y-direction
+
+    Output:
+    ---------------------------------------------------------------------------------------
+    - has_cw_rot    True if trajectory has clockwise rotation, False if not
+    """
+    # initialize output
+    has_cw_rot = False
+
+    # rotate to initial SW movement
+    # from initial SW movement
+    if dx[0] < 0 and dy[0] < 0:
+        dx_rot = dx
+        dy_rot = dy
+    # from initial NW movement
+    elif dx[0] < 0 and dy[0] >= 0:
+        dx_rot = -dy
+        dy_rot = dx
+    # from initial NE movement
+    elif dx[0] >= 0 and dy[0] >= 0:
+        dx_rot = -dx
+        dy_rot = -dy
+    # from initial SE movement
+    else: 
+        dx_rot = dy
+        dy_rot = -dx
+        
+    # find transition SW - NW
+    i_turn = where_both(dx_rot < 0, dy_rot >= 0)[0]
+    if len(i_turn) > 0:
+        rest_lon = dx_rot[i_turn[0]:]
+        rest_lat = dy_rot[i_turn[0]:]
+        # find transition NW - NE
+        i_turn = where_both(rest_lon >= 0, rest_lat >= 0)[0]
+        if len(i_turn) > 0:
+            rest_lon = rest_lon[i_turn[0]:]
+            rest_lat = rest_lat[i_turn[0]:]
+            # find transition NE - SE
+            i_turn = where_both(rest_lon >= 0, rest_lat < 0)[0]
+            if len(i_turn) > 0:
+                has_cw_rot = True
+
+    return has_cw_rot
+
+
+def check_counterclockwise_rotation(dx,dy):
+    """
+    Check if a counterclockwise rotation occurs from tendencies in 2D trajectory.
+
+    Input:
+    ---------------------------------------------------------------------------------------
+    - dx    Array of tendencies in x-direction 
+    - dy    Array of tendencies in y-direction
+
+    Output:
+    ---------------------------------------------------------------------------------------
+    - has_ccw_rot    True if trajectory has counterclockwise rotation, False if not
+    """
+    has_ccw_rot = False
+    # rotate to initial SW movement
+    # from initial SW movement
+    if dx[0] < 0 and dy[0] < 0:
+        dx_rot = dx
+        dy_rot = dy
+    # from initial NW movement
+    elif dx[0] < 0 and dy[0] >= 0:
+        dx_rot = -dy
+        dy_rot = dx
+    # from initial NE movement
+    elif dx[0] >= 0 and dy[0] >= 0:
+        dx_rot = -dx
+        dy_rot = -dy
+    # from initial SE movement
+    else: 
+        dx_rot = dy
+        dy_rot = -dx
+        
+    # find transition SW - SE
+    i_turn = where_both(dx_rot >= 0, dy_rot < 0)[0]
+    if len(i_turn) > 0:
+        rest_lon = dx_rot[i_turn[0]:]
+        rest_lat = dy_rot[i_turn[0]:]
+        # find transition SE - NE
+        i_turn = where_both(rest_lon >= 0, rest_lat >= 0)[0]
+        if len(i_turn) > 0:
+            rest_lon = rest_lon[i_turn[0]:]
+            rest_lat = rest_lat[i_turn[0]:]
+            # find transition NE - NW
+            i_turn = where_both(rest_lon < 0, rest_lat >= 0)[0]
+            if len(i_turn) > 0:
+                has_ccw_rot = True
+
+    return has_ccw_rot
 
 
 def date_and_time(year,day,hour,minutes=None):
@@ -153,116 +313,6 @@ def traj_without_missing_image(trajects):
 
 def where_both(condition_1,condition_2):
     return np.where(np.where(condition_1,True,False)*np.where(condition_2,True,False))
-
-def check_clockwise_rotation(move_lon,move_lat):
-    
-    clockwise_rot = False
-    # rotate to initial SW movement
-    # from initial SW movement
-    if move_lon[0] < 0 and move_lat[0] < 0:
-        move_lon_rot = move_lon
-        move_lat_rot = move_lat
-    # from initial NW movement
-    elif move_lon[0] < 0 and move_lat[0] >= 0:
-        move_lon_rot = -move_lat
-        move_lat_rot = move_lon
-    # from initial NE movement
-    elif move_lon[0] >= 0 and move_lat[0] >= 0:
-        move_lon_rot = -move_lon
-        move_lat_rot = -move_lat
-    # from initial SE movement
-    else: 
-        move_lon_rot = move_lat
-        move_lat_rot = -move_lon
-        
-    # find transition SW - NW
-    i_turn = where_both(move_lon_rot < 0, move_lat_rot >= 0)[0]
-    if len(i_turn) > 0:
-        rest_lon = move_lon_rot[i_turn[0]:]
-        rest_lat = move_lat_rot[i_turn[0]:]
-        # find transition NW - NE
-        i_turn = where_both(rest_lon >= 0, rest_lat >= 0)[0]
-        if len(i_turn) > 0:
-            rest_lon = rest_lon[i_turn[0]:]
-            rest_lat = rest_lat[i_turn[0]:]
-            # find transition NE - SE
-            i_turn = where_both(rest_lon >= 0, rest_lat < 0)[0]
-            if len(i_turn) > 0:
-                clockwise_rot = True
-
-    return clockwise_rot
-
-def check_counterclockwise_rotation(move_lon,move_lat):
-    
-    counterclockwise_rot = False
-    # rotate to initial SW movement
-    # from initial SW movement
-    if move_lon[0] < 0 and move_lat[0] < 0:
-        move_lon_rot = move_lon
-        move_lat_rot = move_lat
-    # from initial NW movement
-    elif move_lon[0] < 0 and move_lat[0] >= 0:
-        move_lon_rot = -move_lat
-        move_lat_rot = move_lon
-    # from initial NE movement
-    elif move_lon[0] >= 0 and move_lat[0] >= 0:
-        move_lon_rot = -move_lon
-        move_lat_rot = -move_lat
-    # from initial SE movement
-    else: 
-        move_lon_rot = move_lat
-        move_lat_rot = -move_lon
-        
-    # find transition SW - SE
-    i_turn = where_both(move_lon_rot >= 0, move_lat_rot < 0)[0]
-    if len(i_turn) > 0:
-        rest_lon = move_lon_rot[i_turn[0]:]
-        rest_lat = move_lat_rot[i_turn[0]:]
-        # find transition SE - NE
-        i_turn = where_both(rest_lon >= 0, rest_lat >= 0)[0]
-        if len(i_turn) > 0:
-            rest_lon = rest_lon[i_turn[0]:]
-            rest_lat = rest_lat[i_turn[0]:]
-            # find transition NE - NW
-            i_turn = where_both(rest_lon < 0, rest_lat >= 0)[0]
-            if len(i_turn) > 0:
-                counterclockwise_rot = True
-
-    return counterclockwise_rot
-
-
-def filter_out_loops(trajects):
-    """
-    Filters out trajectories with loops
-    """
-    # get number of trajectories 
-    N_trajects = trajects.sizes['N_Trajectories']
-    no_loops = []
-    loops_cw = []
-    loops_ccw = []
-    
-    for i in range(N_trajects):
-        traject = trajects.isel(N_Trajectories=i).dropna(dim="Hours_Local_Time",how="all")
-        
-        # get lat lon movement
-        lat = np.array(traject.latitude)
-        lon = np.array(traject.longitude)
-        move_lat = lat[1:] - lat[:-1]
-        move_lon = lon[1:] - lon[:-1]
-        
-        clockwise_rot = check_clockwise_rotation(move_lon,move_lat)
-        
-                    
-        if clockwise_rot:
-            loops_cw.append(i)
-        else:
-            counterclockwise_rot = check_counterclockwise_rotation(move_lon,move_lat)
-            if counterclockwise_rot:
-                loops_ccw.append(i)
-            else:
-                no_loops.append(i)
-                
-    return trajects.isel(N_Trajectories=no_loops), trajects.isel(N_Trajectories=loops_cw), trajects.isel(N_Trajectories=loops_ccw)
 
 
 def map_tracks(track, axis_extent=None, figsize=(10,8), dpi=100, untracked_cell_value=-1):
