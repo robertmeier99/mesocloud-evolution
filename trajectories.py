@@ -4,6 +4,7 @@ Trajectory preprocessing functions for filtering and interpolating ERA5 trajecto
 -------------------------------------------------------------------------------------------
 """
 
+# TODO: Clean up package imports
 from importlib import reload
 
 import sys
@@ -17,7 +18,7 @@ import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 import tobac
 import time 
-import datetime
+from datetime import datetime,timedelta
 
 from gogoesgone.src.gogoesgone import processing as pr
 from gogoesgone.src.gogoesgone import zarr_access as za
@@ -178,6 +179,132 @@ def check_counterclockwise_rotation(dx,dy):
 
     return has_ccw_rot
 
+def add_datetime(ds):
+    """
+    Add UTC datetime DataArray to Dataset of trajectories.
+    """
+    # get UTC time inputs
+    years = ds.year_UTC.values
+    days = ds.day_UTC.values
+    hours = ds.hour_UTC.values
+    
+    # compute minutes and seconds 
+    hours, mins, secs = compute_h_min_sec_from_decimals(hours)
+    
+    # set 24:00 to 0:00 the next day and add year (if necessary)
+    years, days, hours, mins, secs = corr_t_round_err(years,days,hours,mins,secs) 
+    
+    # compute datetimes
+    date_time = np.empty(np.shape(years),dtype=datetime)
+
+    for i in range(np.shape(years)[0]):
+        for j in range(np.shape(years)[1]):
+
+            if np.isfinite(years[i,j]):
+                date_time[i,j] = datetime.strptime(str(int(years[i,j])) 
+                                                + str(int(days[i,j]))
+                                                + "T" + str(hours[i,j])
+                                                + ":" + str(mins[i,j])
+                                                + ":" + str(secs[i,j]), "%Y%jT%H:%M:%S")
+                
+    # add datetimes to Dataset
+    da = xr.DataArray(data=date_time,dims=["Hours_Local_Time","N_Trajectories"])
+    ds = ds.assign(datetime_UTC = da)
+    
+    return ds
+
+def compute_h_min_sec_from_decimals(decimal_hours):
+    """
+    Compute integer hours, minutes and seconds from decimal hours. 
+    """
+    minutes_decimal = decimal_hours % 1
+    minutes = minutes_decimal*60
+    seconds_decimal = minutes % 1
+    seconds = np.rint(seconds_decimal*60).astype(int)
+    minutes = (minutes - seconds_decimal).astype(int)
+    hours = (decimal_hours - minutes_decimal).astype(int)
+
+    return hours, minutes, seconds
+
+def corr_t_round_err(years,days,hours,mins,secs):
+    """
+    Correct for rounding errors like mins = 60, hours = 24 or days = 366 (non-leap years).
+    """
+    # minute jump
+    mins[secs>=60] += 1
+    secs[secs>=60] = secs % 60
+    # hour jump
+    hours[mins>=60] += 1
+    mins[mins>=60] = mins % 60
+    # day jump
+    days[hours>=24] += 1
+    hours[hours>=24] = hours % 24
+    # year jump
+    year_jump = (years!=2020)*(days==366) + (years==2020)*(days==367)
+    years[year_jump] += 1
+    days[year_jump] = 1
+
+    return years, days, hours
+
+def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
+    """
+    Interpolates trajectories linearly from 1 hourly trajectories onto the 10/15-min GOES images.
+    """
+    
+    # Get trajectory numbers and amount of them
+    Trajectory_N = trajects.Trajectory_N.values
+    N_Trajectories = len(Trajectory_N)
+    
+    # Initialize arrays to build new interpolated Dataset
+    longitudes = np.full((N_timesteps,N_Trajectories),np.nan)
+    latitudes = np.full((N_timesteps,N_Trajectories),np.nan)
+    datetime_UTC = np.full((N_timesteps,N_Trajectories),np.nan).astype("datetime64[ns]")
+    
+    # get central time of each GOES scan
+    scan_starts = goes_ref_ds.starttime_scan
+    scan_ends = goes_ref_ds.endtime_scan
+    scan_middle_time = scan_starts + (scan_ends-scan_starts)/2
+    
+    for i in range(N_Trajectories):
+        # select trajectory 
+        track_i = trajects.isel(N_Trajectories=i).dropna(dim="Hours_Local_Time")   # Note: by dropping NaNs here we lose alignment by local hour
+        
+        # longitude cut-off at 60°W
+        over_ocean = np.where(track_i.longitude > -60)[0]
+        
+        # get start and endtime of trajectory above the Atlantic
+        traj_times = track_i.isel(Hours_Local_Time=over_ocean).datetime_UTC
+        starttime = np.min(traj_times)
+        endtime = np.max(traj_times)
+        
+        # get scan times that are in between start and end of trajectory
+        traj_img_times = scan_middle_time[where_both(scan_middle_time>starttime,scan_middle_time<endtime)]
+        datetime_UTC[:len(traj_img_times),i] = traj_img_times
+       
+        # interpolate lat and lon along these image times
+        for j, traj_img_time in enumerate(traj_img_times):
+            time_diffs = (traj_img_time - traj_times).astype(int)
+            
+            # get temporal difference to predecessor and successor trajectory point
+            m = np.min(time_diffs[np.where(time_diffs>0)])
+            n = -np.max(time_diffs[np.where(time_diffs<0)])
+            
+            # get predecessor and successor trajectory point indices
+            past_traj_ind = np.where(time_diffs==m)[0][0]
+            fut_traj_ind = np.where(time_diffs==-n)[0][0]
+            
+            # interpolate
+            longitudes[j,i] = track_i.longitude[past_traj_ind] + m/(m+n)*(track_i.longitude[fut_traj_ind]-track_i.longitude[past_traj_ind])
+            latitudes[j,i] = track_i.latitude[past_traj_ind] + m/(m+n)*(track_i.latitude[fut_traj_ind]-track_i.latitude[past_traj_ind])
+
+    ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
+                                    longitude=(["Time","N_Trajectories"],longitudes),
+                                    latitude=(["Time","N_Trajectories"],latitudes),
+                                    datetime_UTC=(["Time","N_Trajectories"],datetime_UTC)),
+                      attrs=dict(description="Trajectory data interpolated on GOES images"))
+
+    return ds.dropna(dim="Time",how="all")
+
 
 def date_and_time(year,day,hour,minutes=None):
     """
@@ -200,12 +327,6 @@ def date_and_time(year,day,hour,minutes=None):
     date = datetime.datetime.strptime(str(int(year)) + str(int(day)), "%Y%j").strftime("%Y%m%d")
     
     return date, time
-
-def add_date_and_json_index(trajects):
-    """
-    Adds date and json index to the dataset of trajectories
-    """
-    N_trajects = trajects.sizes['N_Trajectories']
     
 
 def save_times_array(trajects):
@@ -368,102 +489,5 @@ def map_tracks(track, axis_extent=None, figsize=(10,8), dpi=100, untracked_cell_
     return
 
 
-def add_datetime(ds):
-    """
-    Add datetime DataArray to Dataset of trajectories
-    """
-    # get UTC time inputs
-    years = ds.year_UTC.values
-    days = ds.day_UTC.values
-    hours = ds.hour_UTC.values
-    
-    # correct for rounding up to 24 h 
-    days[np.where(hours==24)] += 1
-    hours[np.where(hours==24)] = 0
-    
-    # get minutes and seconds 
-    minutes_decimal = hours % 1
-    minutes = minutes_decimal*60
-    seconds_decimal = minutes % 1
-    seconds = np.rint(seconds_decimal*60).astype(int)
-    minutes = (minutes - seconds_decimal).astype(int)
-    hours = (hours - minutes_decimal).astype(int)
-    
-    # correct for 00:00:60
-    minutes[np.where(seconds==60)] += 1
-    seconds[np.where(seconds==60)] = 0 
-    
-    # compute datetimes
-    date_time = np.empty(np.shape(years),dtype=datetime.datetime)
-    for i in range(np.shape(years)[0]):
-        for j in range(np.shape(years)[1]):
-            if np.isnan(years[i,j]) == False:
-                date = datetime.datetime.strptime(str(int(years[i,j])) + str(int(days[i,j])), "%Y%j")
-                date_time[i,j] = datetime.datetime(date.year,date.month,date.day,hours[i,j],minutes[i,j],seconds[i,j])
-                
-    # add datetimes to Dataset
-    da = xr.DataArray(data=date_time,dims=["Hours_Local_Time","N_Trajectories"])
-    ds = ds.assign(datetime_UTC = da)
-    
-    return ds
 
-
-def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
-    """
-    Interpolates trajectories linearly from 1 hourly trajectories onto the 10/15-min GOES images.
-    """
-    
-    # Get trajectory numbers and amount of them
-    Trajectory_N = trajects.Trajectory_N.values
-    N_Trajectories = len(Trajectory_N)
-    
-    # Initialize arrays to build new interpolated Dataset
-    longitudes = np.full((N_timesteps,N_Trajectories),np.nan)
-    latitudes = np.full((N_timesteps,N_Trajectories),np.nan)
-    datetime_UTC = np.full((N_timesteps,N_Trajectories),np.nan).astype("datetime64[ns]")
-    
-    # get central time of each GOES scan
-    scan_starts = goes_ref_ds.starttime_scan
-    scan_ends = goes_ref_ds.endtime_scan
-    scan_middle_time = scan_starts + (scan_ends-scan_starts)/2
-    
-    for i in range(N_Trajectories):
-        # select trajectory 
-        track_i = trajects.isel(N_Trajectories=i).dropna(dim="Hours_Local_Time")   # Note: by dropping NaNs here we lose alignment by local hour
-        
-        # longitude cut-off at 60°W
-        over_ocean = np.where(track_i.longitude > -60)[0]
-        
-        # get start and endtime of trajectory above the Atlantic
-        traj_times = track_i.isel(Hours_Local_Time=over_ocean).datetime_UTC
-        starttime = np.min(traj_times)
-        endtime = np.max(traj_times)
-        
-        # get scan times that are in between start and end of trajectory
-        traj_img_times = scan_middle_time[where_both(scan_middle_time>starttime,scan_middle_time<endtime)]
-        datetime_UTC[:len(traj_img_times),i] = traj_img_times
-       
-        # interpolate lat and lon along these image times
-        for j, traj_img_time in enumerate(traj_img_times):
-            time_diffs = (traj_img_time - traj_times).astype(int)
-            
-            # get temporal difference to predecessor and successor trajectory point
-            m = np.min(time_diffs[np.where(time_diffs>0)])
-            n = -np.max(time_diffs[np.where(time_diffs<0)])
-            
-            # get predecessor and successor trajectory point indices
-            past_traj_ind = np.where(time_diffs==m)[0][0]
-            fut_traj_ind = np.where(time_diffs==-n)[0][0]
-            
-            # interpolate
-            longitudes[j,i] = track_i.longitude[past_traj_ind] + m/(m+n)*(track_i.longitude[fut_traj_ind]-track_i.longitude[past_traj_ind])
-            latitudes[j,i] = track_i.latitude[past_traj_ind] + m/(m+n)*(track_i.latitude[fut_traj_ind]-track_i.latitude[past_traj_ind])
-
-    ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
-                                    longitude=(["Time","N_Trajectories"],longitudes),
-                                    latitude=(["Time","N_Trajectories"],latitudes),
-                                    datetime_UTC=(["Time","N_Trajectories"],datetime_UTC)),
-                      attrs=dict(description="Trajectory data interpolated on GOES images"))
-
-    return ds.dropna(dim="Time",how="all")
 
