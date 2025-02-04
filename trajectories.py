@@ -256,7 +256,7 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
     datetime_UTC = np.full((N_timesteps,N_Trajectories),np.nan).astype("datetime64[ns]")
     
     # get central time of each GOES scan
-    scan_middle_time = goes_ref_ds.middletime_scan
+    scan_middle_times = goes_ref_ds.middletime_scan.values
     
     for i in range(N_Trajectories):
         # select trajectory 
@@ -268,7 +268,7 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
         traj_lats = traject.latitude.values
 
         # interpolate trajectory onto GOES scantimes
-        traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,scan_middle_time)
+        traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,scan_middle_times)
 
         datetime_UTC[:len(traj_interp[0]),i] = traj_interp[0]
         longitudes[:len(traj_interp[1]),i] = traj_interp[1]
@@ -308,15 +308,15 @@ def temp_interp_2D(t,x,y,t_hr):
     y_interp = np.empty(len(t_interp))
 
     for j in range(len(t_interp)):
-        delta_t = (t_interp-t).astype(int)
+        delta_t = (t-t_interp[j]).astype(int)
 
         # get temporal difference to predecessor and successor trajectory point
-        delta_t_prev = np.min(delta_t[delta_t>=0])
-        delta_t_next = -np.max(delta_t[delta_t<0])
+        delta_t_next = np.min(delta_t[delta_t>=0])
+        delta_t_prev = -np.max(delta_t[delta_t<0])
         
         # get predecessor and successor trajectory point indices
-        prev_traj_idx = np.where(delta_t==delta_t_prev)[0][0]
-        next_traj_idx = np.where(delta_t==-delta_t_next)[0][0]
+        next_traj_idx = np.where(delta_t==delta_t_next)[0][0]
+        prev_traj_idx = np.where(delta_t==-delta_t_prev)[0][0]
         
         # interpolate
         interp_factor = delta_t_prev/(delta_t_prev+delta_t_next)
