@@ -20,11 +20,6 @@ import tobac
 import time 
 from datetime import datetime,timedelta
 
-from gogoesgone.src.gogoesgone import processing as pr
-from gogoesgone.src.gogoesgone import zarr_access as za
-reload(pr)
-reload(za)
-
 
 def filter_out_loops(trajects):
     """
