@@ -227,19 +227,19 @@ def corr_t_round_err(years,days,hours,mins,secs):
     """
     # minute jump
     mins[secs>=60] += 1
-    secs[secs>=60] = secs % 60
+    secs = np.where(secs>=60,secs % 60,secs)
     # hour jump
     hours[mins>=60] += 1
-    mins[mins>=60] = mins % 60
+    mins = np.where(mins>=60,mins % 60,mins)
     # day jump
     days[hours>=24] += 1
-    hours[hours>=24] = hours % 24
+    hours = np.where(hours>=24,hours % 24,hours)
     # year jump
     year_jump = (years!=2020)*(days==366) + (years==2020)*(days==367)
     years[year_jump] += 1
     days[year_jump] = 1
 
-    return years, days, hours
+    return years, days, hours, mins, secs
 
 def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
     """
