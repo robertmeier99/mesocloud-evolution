@@ -256,41 +256,23 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
     datetime_UTC = np.full((N_timesteps,N_Trajectories),np.nan).astype("datetime64[ns]")
     
     # get central time of each GOES scan
-    scan_starts = goes_ref_ds.starttime_scan
-    scan_ends = goes_ref_ds.endtime_scan
-    scan_middle_time = scan_starts + (scan_ends-scan_starts)/2
+    scan_middle_time = goes_ref_ds.middletime_scan
     
     for i in range(N_Trajectories):
         # select trajectory 
-        track_i = trajects.isel(N_Trajectories=i).dropna(dim="Hours_Local_Time")   # Note: by dropping NaNs here we lose alignment by local hour
+        traject = trajects.isel(N_Trajectories=i)#.dropna(dim="Hours_Local_Time")   # Note: by dropping NaNs here we lose alignment by local hour
         
-        # longitude cut-off at 60°W
-        over_ocean = np.where(track_i.longitude > -60)[0]
-        
-        # get start and endtime of trajectory above the Atlantic
-        traj_times = track_i.isel(Hours_Local_Time=over_ocean).datetime_UTC
-        starttime = np.min(traj_times)
-        endtime = np.max(traj_times)
-        
-        # get scan times that are in between start and end of trajectory
-        traj_img_times = scan_middle_time[where_both(scan_middle_time>starttime,scan_middle_time<endtime)]
-        datetime_UTC[:len(traj_img_times),i] = traj_img_times
-       
-        # interpolate lat and lon along these image times
-        for j, traj_img_time in enumerate(traj_img_times):
-            time_diffs = (traj_img_time - traj_times).astype(int)
-            
-            # get temporal difference to predecessor and successor trajectory point
-            m = np.min(time_diffs[np.where(time_diffs>0)])
-            n = -np.max(time_diffs[np.where(time_diffs<0)])
-            
-            # get predecessor and successor trajectory point indices
-            past_traj_ind = np.where(time_diffs==m)[0][0]
-            fut_traj_ind = np.where(time_diffs==-n)[0][0]
-            
-            # interpolate
-            longitudes[j,i] = track_i.longitude[past_traj_ind] + m/(m+n)*(track_i.longitude[fut_traj_ind]-track_i.longitude[past_traj_ind])
-            latitudes[j,i] = track_i.latitude[past_traj_ind] + m/(m+n)*(track_i.latitude[fut_traj_ind]-track_i.latitude[past_traj_ind])
+        # get trajectory times and locations
+        traj_times = traject.datetime_UTC.values
+        traj_lons = traject.longitude.values
+        traj_lats = traject.latitude.values
+
+        # interpolate trajectory onto GOES scantimes
+        traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,scan_middle_time)
+
+        datetime_UTC[:len(traj_interp[0]),i] = traj_interp[0]
+        longitudes[:len(traj_interp[1]),i] = traj_interp[1]
+        latitudes[:len(traj_interp[2]),i] = traj_interp[2]
 
     ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
                                     longitude=(["Time","N_Trajectories"],longitudes),
@@ -300,6 +282,48 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
 
     return ds.dropna(dim="Time",how="all")
 
+def temp_interp_2D(t,x,y,t_hr):
+    """
+    Interpolate 2D trajectory locations temporally. First checks which of the high 
+    resolution times are within the time range of the trajectory.
+
+    Input:
+    ---------------------------------------------------------------------------------------
+    - t:        time coordinate of the input trajectory
+    - x:        x-coordinate of the input trajectory
+    - y:        y-coordinate of the input trajectory
+    - t_hr:     higher resoultion time coordinate 
+
+    Output:
+    ---------------------------------------------------------------------------------------
+    - t_interp: time coordinate of interpolated trajectory
+    - x_interp: x-coordinate of interpolated trajectory
+    - y_interp: y-coordinate of interpolated trajectory
+    """
+    # high res times within the trajectory time range
+    t_interp = t_hr[(t_hr >= np.min(t))*(t_hr < np.max(t))]
+
+    # initialize output
+    x_interp = np.empty(len(t_interp))
+    y_interp = np.empty(len(t_interp))
+
+    for j in range(len(t_interp)):
+        delta_t = (t_interp-t).astype(int)
+
+        # get temporal difference to predecessor and successor trajectory point
+        delta_t_prev = np.min(delta_t[delta_t>=0])
+        delta_t_next = -np.max(delta_t[delta_t<0])
+        
+        # get predecessor and successor trajectory point indices
+        prev_traj_idx = np.where(delta_t==delta_t_prev)[0][0]
+        next_traj_idx = np.where(delta_t==-delta_t_next)[0][0]
+        
+        # interpolate
+        interp_factor = delta_t_prev/(delta_t_prev+delta_t_next)
+        x_interp[j] = x[prev_traj_idx] + interp_factor*(x[next_traj_idx]-x[prev_traj_idx])
+        y_interp[j] = y[prev_traj_idx] + interp_factor*(y[next_traj_idx]-y[prev_traj_idx])
+    
+    return t_interp, x_interp, y_interp
 
 def traj_without_missing_image(trajects):
     """
