@@ -16,7 +16,6 @@ import xarray as xr
 import pandas as pd
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
-import tobac
 import time 
 from datetime import datetime,timedelta
 
@@ -350,58 +349,6 @@ def traj_without_missing_image(trajects):
 def where_both(condition_1,condition_2):
     return np.where(np.where(condition_1,True,False)*np.where(condition_2,True,False))
 
-
-def map_tracks(track, axis_extent=None, figsize=(10,8), dpi=100, untracked_cell_value=-1):
-    """Plot the trajectories of the cells on a map.
-
-    Parameters
-    ----------
-    track : xarray.Dataset
-        Dataset containing the trajectories
-
-    axis_extent : matplotlib.axes, optional
-        Array containing the bounds of the longitude
-        and latitude values. The structure is
-        [long_min, long_max, lat_min, lat_max].
-        Default is None.
-
-    figsize : tuple of floats, optional
-        Width, height of the plot in inches.
-        Default is (10, 10).
-
-    untracked_cell_value : int or np.nan, optional
-        Value of untracked cells in track['cell'].
-        Default is -1.
-
-    Raises
-    ------
-    ValueError
-        If no axes is passed.
-    """
-
-    fig_map,axes = plt.subplots(figsize=figsize,dpi=dpi,subplot_kw={'projection': ccrs.PlateCarree()})
-    
-    if axes is None:
-        raise ValueError(
-            "axes needed to plot tracks onto. Pass in an axis to axes to resolve this error."
-        )
-    traject_num = np.array(track.Trajectory_N)
-    for cell in traject_num:
-        if cell == untracked_cell_value:
-            continue
-        track_i = track.isel(N_Trajectories=np.where(traject_num == cell)[0]).dropna(dim="Time")
-        starttime = pd.to_datetime(np.min(track_i.datetime_UTC.values)).strftime("%d-%m-%Y %H:%M")
-        endtime = pd.to_datetime(np.max(track_i.datetime_UTC.values)).strftime("%d-%m-%Y %H:%M")
-
-        axes.plot(np.array(track_i.longitude), np.array(track_i.latitude), "-", label=f"From {starttime} to {endtime}")
-
-        if axis_extent:
-            axes.set_extent(axis_extent)
-        axes = tobac.make_map(axes)
-
-    axes.legend()
-
-    return
 
 
 
