@@ -18,6 +18,7 @@ import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 import time 
 from datetime import datetime,timedelta
+import calendar
 
 
 def filter_out_loops(trajects):
@@ -234,7 +235,7 @@ def corr_t_round_err(years,days,hours,mins,secs):
     days[hours>=24] += 1
     hours = np.where(hours>=24,hours % 24,hours)
     # year jump
-    year_jump = (years!=2020)*(days==366) + (years==2020)*(days==367)
+    year_jump = ((years%4)>0)*(days==366) + ((years%4)==0)*(days==367)
     years[year_jump] += 1
     days[year_jump] = 1
 
