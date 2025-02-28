@@ -4,21 +4,14 @@ Trajectory preprocessing functions for filtering and interpolating ERA5 trajecto
 -------------------------------------------------------------------------------------------
 """
 
-# TODO: Clean up package imports
-from importlib import reload
-
 import sys
 sys.path.append("..")
 
-import os
 import numpy as np
 import xarray as xr
-import pandas as pd
-import cartopy.crs as ccrs
-import matplotlib.pyplot as plt
-import time 
-from datetime import datetime,timedelta
-import calendar
+from datetime import datetime
+
+from utils import where_both
 
 
 def filter_out_loops(trajects):
@@ -325,30 +318,6 @@ def temp_interp_2D(t,x,y,t_hr):
     
     return t_interp, x_interp, y_interp
 
-def traj_without_missing_image(trajects):
-    """
-    Find trajectory numbers with missing images
-    """
-    path = "/home/robert/Coding/cloud_org_evolution/ERA_5_traj/Trajectory arrays/"
-
-    # get trajectory numbers
-    traj_numbers = np.unique(trajects.Trajectory_N)
-    traj_numbers = traj_numbers.astype(int) 
-
-    # initialize indix list
-    with_images = []
-    
-    for i, traj_number in enumerate(traj_numbers):
-        name = f"trajectory_{traj_number}_dates.npy"
-        for root, dirs, files in os.walk(path):
-            if name in files:
-                with_images.append(i)
-    
-    return trajects.isel(N_Trajectories=with_images)
-
-
-def where_both(condition_1,condition_2):
-    return np.where(np.where(condition_1,True,False)*np.where(condition_2,True,False))
 
 
 
