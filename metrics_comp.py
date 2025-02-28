@@ -6,30 +6,38 @@ import datetime
 import glob
 import os
 import resource
-from line_profiler import LineProfiler
+#from line_profiler import LineProfiler
 
-from gogoesgone import processing as pr
-from gogoesgone import zarr_access as za
+#from gogoesgone import processing as pr
+#from gogoesgone import zarr_access as za
 
-def where_both(condition_1,condition_2):
-    return np.where(np.where(condition_1,True,False)*np.where(condition_2,True,False))
+from utils import where_both
 
-def high_cloud_fraction(temperatures,threshold):
-    """
-    Computes the fraction of pixels with lower brightness temperature (therefore higher in altitude) than a threshold temperature.
-    
-    Parameters
-    ----------
-    temperatures: array_like
-        Brightness temperatures per pixel in a satellite image
-    threshold: scalar
-        Threshold temperature 
+def main():
+    start = time.time()
+    # initialize line profiler
+    lp = LineProfiler()
+    lp_wrapper = lp(compute_metrics)
+    # get datasets and set input 
+    goes_ref_ds = xr.open_dataset("goes_ref_ds.nc")
+    trajects = xr.open_dataset("trajectory.nc")
+    save_freq = 100 # save after every 100 images
+    framesize = 5
+    traj_extents = (-60+framesize/2,-20-framesize/2,-5+framesize/2,30-framesize/2) 
+    trajects = trajects.where((trajects.longitude >= traj_extents[0])
+                             &(trajects.longitude <= traj_extents[1])
+                             &(trajects.latitude >= traj_extents[2])
+                             &(trajects.latitude <= traj_extents[3]),
+                             drop=True)  # Should not be dropped for alignment
+    # compute
+    #res_trajects =  compute_metrics(trajects,goes_ref_ds,framesize,save_freq)
+    res_trajects =  lp_wrapper(trajects,goes_ref_ds,framesize,save_freq)
+    os.remove("trajectories_with_metrics.nc")
+    res_trajects.to_netcdf("trajectories_with_metrics.nc")
+    lp.print_stats()
+    print("programm completed in" + str(round(time.time()-start,0)) + "s.")
+    print("memory usage:", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss, "Kb")
 
-    Return
-    ------
-    fraction of pixels below threshold temperature
-    """
-    return np.histogram(temperatures, bins=[0,threshold,400],density=True)[0][0]*threshold
 
 def compute_metrics(trajects,goes_ref_ds,framesize=5,save_freq=100,accessmode="netCDF"):
     """
@@ -195,28 +203,25 @@ def compute_metrics(trajects,goes_ref_ds,framesize=5,save_freq=100,accessmode="n
         
     return res_trajects
 
-if __name__ == "__main__":
 
-    start = time.time()
-    # initialize line profiler
-    lp = LineProfiler()
-    lp_wrapper = lp(compute_metrics)
-    # get datasets and set input 
-    goes_ref_ds = xr.open_dataset("goes_ref_ds.nc")
-    trajects = xr.open_dataset("trajectory.nc")
-    save_freq = 100 # save after every 100 images
-    framesize = 5
-    traj_extents = (-60+framesize/2,-20-framesize/2,-5+framesize/2,30-framesize/2) 
-    trajects = trajects.where((trajects.longitude >= traj_extents[0])
-                             &(trajects.longitude <= traj_extents[1])
-                             &(trajects.latitude >= traj_extents[2])
-                             &(trajects.latitude <= traj_extents[3]),
-                             drop=True)  # Should not be dropped for alignment
-    # compute
-    #res_trajects =  compute_metrics(trajects,goes_ref_ds,framesize,save_freq)
-    res_trajects =  lp_wrapper(trajects,goes_ref_ds,framesize,save_freq)
-    os.remove("trajectories_with_metrics.nc")
-    res_trajects.to_netcdf("trajectories_with_metrics.nc")
-    lp.print_stats()
-    print("programm completed in" + str(round(time.time()-start,0)) + "s.")
-    print("memory usage:", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss, "Kb")
+def high_cloud_fraction(temperatures,threshold):
+    """
+    Computes the fraction of pixels with lower brightness temperature 
+    (therefore higher in altitude) than a threshold temperature.
+    
+    Parameters
+    ----------
+    temperatures: array_like
+        Brightness temperatures per pixel from satellite image
+    threshold: scalar
+        Threshold temperature (exclusive)
+
+    Return
+    ------
+    fraction of pixels below threshold temperature
+    """
+    return np.histogram(temperatures, bins=[0,threshold,400],density=True)[0][0]*threshold
+
+
+if __name__ == "__main__":
+    main()
