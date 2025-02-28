@@ -294,7 +294,7 @@ def temp_interp_2D(t,x,y,t_hr):
     - y_interp: y-coordinate of interpolated trajectory
     """
     # high res times within the trajectory time range
-    t_interp = t_hr[(t_hr >= np.min(t))*(t_hr < np.max(t))]
+    t_interp = t_hr[(t_hr > np.min(t))*(t_hr < np.max(t))]
 
     # initialize output
     x_interp = np.empty(len(t_interp))
