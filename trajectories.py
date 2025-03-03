@@ -11,7 +11,7 @@ import numpy as np
 import xarray as xr
 from datetime import datetime,timedelta
 
-from utils import where_both, generate_globsearch_string, generate_url_list
+from utils import where_both, dropna, generate_globsearch_string, generate_url_list
 
 
 def filter_out_loops(trajects):
@@ -355,10 +355,10 @@ def get_goes_ref_ds(years,months,margin=4):
     
     # initialize output
     max_length = (len(years)*len(months)*31 + 2*margin)*24*6
-    scan_start = np.empty(max_length,dtype="datetime64[ns]")
-    scan_end = np.empty(max_length,dtype="datetime64[ns]")
-    datestr = np.empty(max_length)
-    time_ind = np.empty(max_length)
+    scan_start = np.full(max_length, np.nan,dtype="datetime64[ns]") 
+    scan_end = np.full(max_length, np.nan,dtype="datetime64[ns]") 
+    datestr = np.full(max_length, np.nan) 
+    time_ind = np.full(max_length, np.nan) 
     counter_idx = 0
 
     # GOES data naming convention
@@ -380,7 +380,7 @@ def get_goes_ref_ds(years,months,margin=4):
                     scan_end[counter_idx] = scan_e
                     datestr[counter_idx] = datetime.strftime(scan_s,"%Y%m%d")
                     time_ind[counter_idx] = i
-                    counter_idx =+ 1
+                    counter_idx += 1
 
         else:                       # non-leap years
 
@@ -397,7 +397,13 @@ def get_goes_ref_ds(years,months,margin=4):
                     scan_end[counter_idx] = scan_e
                     datestr[counter_idx] = datetime.strftime(scan_s,"%Y%m%d")
                     time_ind[counter_idx] = i
-                    counter_idx =+ 1
+                    counter_idx += 1
+    
+    # exclude nans
+    scan_start = dropna(scan_start)
+    scan_end = dropna(scan_end)
+    datestr = dropna(datestr)
+    time_ind = dropna(time_ind)
 
     # compute central scantime
     time = scan_start + (scan_end - scan_start)/2
