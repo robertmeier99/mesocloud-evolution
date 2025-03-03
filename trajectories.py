@@ -9,9 +9,9 @@ sys.path.append("..")
 
 import numpy as np
 import xarray as xr
-from datetime import datetime
+from datetime import datetime,timedelta
 
-from utils import where_both
+from utils import where_both, generate_globsearch_string, generate_url_list
 
 
 def filter_out_loops(trajects):
@@ -317,6 +317,105 @@ def temp_interp_2D(t,x,y,t_hr):
         y_interp[j] = y[prev_traj_idx] + interp_factor*(y[next_traj_idx]-y[prev_traj_idx])
     
     return t_interp, x_interp, y_interp
+
+def get_goes_ref_ds(years,months,margin=4):
+    """
+    Generate Dataset that stores GOES-16 scantimes (start,middle,end), datestrings
+    related to the daily netCDF/json files and indices for the time of the day.
+    
+    Input:
+    ---------------------------------------------------------------------------------------
+    - years:        List of strings giving the years of interest
+    - months:       List of integers giving the months of interest
+    - margin:       Integer number of days before and after seasonal period of interest
+                    (default 4 for 6-day trajectories)
+
+    Output:
+    ---------------------------------------------------------------------------------------
+    - goes_ref_ds   Dataset of reference to GOES-16 images available from AWS storage
+    """
+    # generate list of strings with zeropadded days of year 
+    daysofyear = np.arange(1,367).astype(str)
+    for i in range(len(daysofyear)):
+        daysofyear[i] = daysofyear[i].rjust(3,"0")
+
+    # take out days within given months +- margin of days
+    if np.any(np.array(years).astype(int)%4 == 0):
+        date_in_margin = np.zeros(366,dtype="bool")
+        for i,dayofyear in enumerate(daysofyear):
+            date = datetime.strptime("2020"+dayofyear,"%Y%j") 
+            date_in_margin[i] = ((date + timedelta(margin)).month in months) or ((date - timedelta(margin)).month in months)
+        daysofleapyear = daysofyear[date_in_margin]
+    if np.any(np.array(years).astype(int)%4 > 0):
+        date_in_margin = np.zeros(366,dtype="bool")
+        for i,dayofyear in enumerate(daysofyear[:-1]):
+            date = datetime.strptime("2019"+dayofyear,"%Y%j") 
+            date_in_margin[i] = ((date + timedelta(margin)).month in months) or ((date - timedelta(margin)).month in months)
+        daysofnonleapyear = daysofyear[date_in_margin]
+    
+    # initialize output
+    max_length = (len(years)*len(months)*31 + 2*margin)*24*6
+    scan_start = np.empty(max_length,dtype="datetime64[ns]")
+    scan_end = np.empty(max_length,dtype="datetime64[ns]")
+    datestr = np.empty(max_length)
+    time_ind = np.empty(max_length)
+    counter_idx = 0
+
+    # GOES data naming convention
+    time_format = "%Y%j%H%M%S"
+
+    for year in years:
+        if int(year)%4 == 0:        # leap years
+
+            for dayofyear in daysofleapyear:
+                print(year + " " + dayofyear)
+                gss = generate_globsearch_string(year,dayofyear,channel=13, product="ABI-L2-CMIPF", satellite="goes16")
+                flist = generate_url_list(gss)
+                if len(flist) == 0:
+                    continue
+                for i in range(len(flist)):
+                    scan_s = datetime.strptime(flist[i].split("_e")[0].split("_s")[1][:-1],time_format)
+                    scan_e = datetime.strptime(flist[i].split("_e")[1].split("_c")[0][:-1],time_format)
+                    scan_start[counter_idx] = scan_s
+                    scan_end[counter_idx] = scan_e
+                    datestr[counter_idx] = datetime.strftime(scan_s,"%Y%m%d")
+                    time_ind[counter_idx] = i
+                    counter_idx =+ 1
+
+        else:                       # non-leap years
+
+            for dayofyear in daysofnonleapyear:
+                print(year + " " + dayofyear)
+                gss = generate_globsearch_string(year,dayofyear,channel=13, product="ABI-L2-CMIPF", satellite="goes16")
+                flist = generate_url_list(gss)
+                if len(flist) == 0:
+                    continue
+                for i in range(len(flist)):
+                    scan_s = datetime.strptime(flist[i].split("_e")[0].split("_s")[1][:-1],time_format)
+                    scan_e = datetime.strptime(flist[i].split("_e")[1].split("_c")[0][:-1],time_format)
+                    scan_start[counter_idx] = scan_s
+                    scan_end[counter_idx] = scan_e
+                    datestr[counter_idx] = datetime.strftime(scan_s,"%Y%m%d")
+                    time_ind[counter_idx] = i
+                    counter_idx =+ 1
+
+    # compute central scantime
+    time = scan_start + (scan_end - scan_start)/2
+
+    # generate Dataset
+    goes_ref_ds = xr.Dataset(data_vars=dict(starttime_scan = (["time"], scan_start),
+                               endtime_scan = (["time"], scan_end),
+                               datestring = (["time"], datestr),
+                               t_index = (["time"], time_ind)),
+                            coords=dict(
+                                time = time
+                            ),
+                attrs=dict(description="GOES image times and image file reference"),
+                )
+    
+    goes_ref_ds["time"] = goes_ref_ds.time.assign_attrs(description="central time of scan (time of tropics scan)")
+
+    return goes_ref_ds.sortby("time")
 
 
 
