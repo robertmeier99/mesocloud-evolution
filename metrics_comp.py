@@ -10,36 +10,32 @@ from datetime import datetime
 import glob
 import os
 import resource
-#from line_profiler import LineProfiler
-
-#from gogoesgone import processing as pr
-#from gogoesgone import zarr_access as za
+from line_profiler import LineProfiler
 
 from utils import where_both, extract_frame
-from trajectories import interpolate_trajects, add_datetime
+from trajectories import interpolate_trajects, add_datetime, get_goes_ref_ds
 
 def main():
-    start = time.time()
-    # initialize line profiler
-    # lp = LineProfiler()
-    # lp_wrapper = lp(compute_metrics)
-
     # set inputs
     data_dir = "/scratch-shared/rmeier/Data/GOES-CMIP-C13-Tropical-North-Atlantic/daily/"
+    ref_dir = "data/goes_reference/"
     traj_dir = "data/trajectories/"
-    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2020"
+    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2020_intp"
     save_freq = 100 # save after every 100 images
     framesize = 5
+    accessmode= "no access" # "netCDF"
+    profiler = False
+
+    start = time.time()
+
+    if profiler:
+        initialize line profiler
+        lp = LineProfiler()
+        lp_wrapper = lp(compute_metrics)
 
     # get datasets
-    goes_ref_ds = xr.open_dataset("data/goes_reference/goes_ref_ds.nc")
     trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
-
-    print(str(datetime.now())+": Adding UTC datetime to trajectories...")
-    trajects = add_datetime(trajects)
-
-    print(str(datetime.now())+": Interpolate trajectories...")
-    trajects = interpolate_trajects(trajects,goes_ref_ds)
+    goes_ref_ds = xr.open_dataset(ref_dir + "goes_ref_ds.nc")
     
     print(str(datetime.now())+": Selecting trajectory extent...")
     traj_extents = (-70+framesize/2,-10-framesize/2,0+framesize/2,40-framesize/2) 
@@ -49,11 +45,16 @@ def main():
                              &(trajects.latitude <= traj_extents[3]))  
     
     # compute
-    res_trajects = compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,framesize,save_freq,accessmode="no access")
-    #res_trajects = lp_wrapper(trajects,goes_ref_ds,framesize,save_freq)
-    os.remove(traj_dir + traj_file_name + "_with_metrics.nc")
-    res_trajects.to_netcdf(traj_dir + traj_file_name + "_with_metrics.nc")
-    #lp.print_stats()
+    if profiler:
+        res_trajects = lp_wrapper(trajects,goes_ref_ds,data_dir,traj_dir,framesize,save_freq,accessmode)
+        os.remove(traj_dir + traj_file_name + "_with_metrics.nc")
+        res_trajects.to_netcdf(traj_dir + traj_file_name + "_with_metrics.nc")
+        lp.print_stats()
+    else:
+        res_trajects = compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,framesize,save_freq,accessmode)
+        os.remove(traj_dir + traj_file_name + "_with_metrics.nc")
+        res_trajects.to_netcdf(traj_dir + traj_file_name + "_with_metrics.nc")
+ 
     print("programm completed in" + str(round(time.time()-start,0)) + "s.")
     print("memory usage:", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss, "Kb")
 
@@ -63,21 +64,32 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
     Computes metrics on interpolated trajectories and gives out the trajectory dataset with metrics.
 
     Parameters
-    ----------
-    trajects: xarray.Dataset with dimensions "N_Trajectories" and "Time"
-        Interpolated trajectories with latitude, longitude and UTC time along the "Time" dimension
-    goes_ref_ds: xarray.Dataset with dimension "time"
-        Dataset of GOES-16 images of winter seasons (DJF) between 2017/18 and 2022/23 with start-, end- and centraltime of the scan and datestring and t_index to allocate the image in downloaded files
-    framesize: int
-        Size of the square lat/lon frame in degree, where the metrics are computed on (standard 5x5)
-    accessmode: "netCDF" or "json"
-        Mode of access via downloaded netCDF files or via json mapping to AWS server, where GOES-16 data is stored
-        (Currently json mode is not implemented!)
+    ---------------------------------------------------------------------------------------
+    - trajects: xarray.Dataset with dimensions "N_Trajectories" and "Time"
+        Interpolated trajectories with latitude, longitude and UTC time along 
+        the "Time" dimension
+    - goes_ref_ds: xarray.Dataset with dimension "time"
+        Dataset of GOES-16 images of winter seasons (DJF) between 2017/18 and 2022/23 
+        with start-, end- and centraltime of the scan and datestring and t_index to 
+        allocate the image in downloaded files
+    - data_dir: str        
+        Directory, where image files are stored
+    - traj_dir: str        
+        Directory, where trajectory files are stored
+    - traj_file_name: str
+        File name of the trajectory dataset  
+    - framesize: int
+        Size of the square lat/lon frame in degree, where the metrics are computed on 
+        (standard 5x5)
+    - accessmode: "netCDF" or "json" or "no access"
+        Mode of access via downloaded netCDF files or via json mapping to AWS server, 
+        where GOES-16 data is stored. Currently json mode is not implemented! 
+        Choose "no access" for test run without accessing image files.
 
     Return
-    ------
-    trajects: xarray.Dataset with dimensions "N_Trajectories" and "Time"
-        Same dataset as input, but with metrics added as variables along the "Time" dimension
+    ---------------------------------------------------------------------------------------
+    - trajects: xarray.Dataset with dimensions "N_Trajectories" and "Time"
+        Same dataset as input, but metrics added as variables along the "Time" dimension
     """
     print(str(datetime.now())+": Initialize cloud metrics...")
 
@@ -242,14 +254,14 @@ def high_cloud_fraction(temperatures,threshold):
     
     Parameters
     ----------
-    temperatures: array_like
+    - temperatures: array_like
         Brightness temperatures per pixel from satellite image
-    threshold: scalar
+    - threshold: scalar
         Threshold temperature (exclusive)
 
     Return
     ------
-    fraction of pixels below threshold temperature
+    - fraction of pixels below threshold temperature
     """
     return np.histogram(temperatures, bins=[0,threshold,400],density=True)[0][0]*threshold
 
