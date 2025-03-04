@@ -379,8 +379,8 @@ def get_goes_ref_ds(years,months,margin=4):
     
     # initialize output
     max_length = (len(years)*len(months)*31 + 2*margin)*24*6
-    scan_start = np.full(max_length, np.nan,dtype="datetime64[ns]") 
-    scan_end = np.full(max_length, np.nan,dtype="datetime64[ns]") 
+    scan_start = np.full(max_length, np.nan, dtype="datetime64[ns]") 
+    scan_end = np.full(max_length, np.nan, dtype="datetime64[ns]") 
     datestr = np.full(max_length, np.nan) 
     time_ind = np.full(max_length, np.nan) 
     counter_idx = 0
@@ -423,11 +423,11 @@ def get_goes_ref_ds(years,months,margin=4):
                     time_ind[counter_idx] = i
                     counter_idx += 1
     
-    # exclude nans
+    # exclude nans and convert dtype
     scan_start = dropna(scan_start)
     scan_end = dropna(scan_end)
-    datestr = dropna(datestr)
-    time_ind = dropna(time_ind)
+    datestr = dropna(datestr).astype(int).astype(str)
+    time_ind = dropna(time_ind).astype(int)
 
     # compute central scantime
     time = scan_start + (scan_end - scan_start)/2
