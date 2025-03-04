@@ -15,10 +15,10 @@ from utils import where_both, dropna, generate_globsearch_string, generate_url_l
 
 def main():
     # input directory
-    traj_dir = "data/trajectories/"
-    ref_dir = "data/goes_reference/"
+    traj_dir = "~/Data/Trajectories/"
+    ref_dir = "~/Data/goes16_reference/"
     traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2020"
-    generate_ref_ds = True
+    generate_ref_ds = False
 
     # get datasets
     trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
@@ -273,7 +273,7 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
     datetime_UTC = np.full((N_timesteps,N_Trajectories),np.nan).astype("datetime64[ns]")
     
     # get central time of each GOES scan
-    scan_middle_times = goes_ref_ds.middletime_scan.values
+    central_img_time = goes_ref_ds.time.values
     
     for i in range(N_Trajectories):
         # select trajectory 
@@ -285,7 +285,7 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
         traj_lats = traject.latitude.values
 
         # interpolate trajectory onto GOES scantimes
-        traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,scan_middle_times)
+        traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,central_img_time)
 
         datetime_UTC[:len(traj_interp[0]),i] = traj_interp[0]
         longitudes[:len(traj_interp[1]),i] = traj_interp[1]
