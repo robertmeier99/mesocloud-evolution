@@ -13,6 +13,30 @@ from datetime import datetime,timedelta
 
 from utils import where_both, dropna, generate_globsearch_string, generate_url_list
 
+def main():
+    # input directory
+    traj_dir = "data/trajectories/"
+    ref_dir = "data/goes_reference/"
+    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2020"
+    generate_ref_ds = True
+
+    # get datasets
+    trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
+
+    if generate_ref_ds:
+        print(str(datetime.now())+": Generating reference dataset...")
+        goes_ref_ds = get_goes_ref_ds(["2017","2018","2019","2020","2021","2022"],[12,1,2])
+        goes_ref_ds.to_netcdf(ref_dir + "goes_ref_ds.nc")
+    else:
+        goes_ref_ds = xr.open_dataset(ref_dir + "goes_ref_ds.nc")
+
+    print(str(datetime.now())+": Adding UTC datetime to trajectories...")
+    trajects = add_datetime(trajects)
+
+    print(str(datetime.now())+": Interpolate trajectories...")
+    trajects = interpolate_trajects(trajects,goes_ref_ds)
+    trajects.to_netcdf(traj_dir + traj_file_name + "_intp.nc")
+
 
 def filter_out_loops(trajects):
     """
@@ -422,6 +446,10 @@ def get_goes_ref_ds(years,months,margin=4):
     goes_ref_ds["time"] = goes_ref_ds.time.assign_attrs(description="central time of scan (time of tropics scan)")
 
     return goes_ref_ds.sortby("time")
+
+
+if __name__ == "__main__":
+    main()
 
 
 
