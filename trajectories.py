@@ -9,6 +9,7 @@ sys.path.append("..")
 
 import numpy as np
 import xarray as xr
+from scipy.interpolate import CubicSpline
 from datetime import datetime,timedelta
 
 from utils import where_both, dropna, generate_globsearch_string, generate_url_list
@@ -17,8 +18,9 @@ def main():
     # input directory
     traj_dir = "~/Data/Trajectories/"
     ref_dir = "~/Data/goes16_reference/"
-    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2020"
+    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2017-2022_datetime"
     generate_ref_ds = False
+    add_dt = False
 
     # get datasets
     trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
@@ -30,8 +32,9 @@ def main():
     else:
         goes_ref_ds = xr.open_dataset(ref_dir + "goes_ref_ds.nc")
 
-    print(str(datetime.now())+": Adding UTC datetime to trajectories...")
-    trajects = add_datetime(trajects)
+    if add_dt:
+        print(str(datetime.now())+": Adding UTC datetime to trajectories...")
+        trajects = add_datetime(trajects)
 
     print(str(datetime.now())+": Interpolate trajectories...")
     trajects = interpolate_trajects(trajects,goes_ref_ds)
@@ -271,7 +274,9 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
     longitudes = np.full((N_timesteps,N_Trajectories),np.nan)
     latitudes = np.full((N_timesteps,N_Trajectories),np.nan)
     datetime_UTC = np.full((N_timesteps,N_Trajectories),np.nan).astype("datetime64[ns]")
-    
+    sst = np.full((N_timesteps,N_Trajectories),np.nan)
+    skt = np.full((N_timesteps,N_Trajectories),np.nan)
+
     # get central time of each GOES scan
     central_img_time = goes_ref_ds.time.values
     
@@ -284,6 +289,16 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
         traj_lons = traject.longitude.values
         traj_lats = traject.latitude.values
 
+        # get trajectory sst
+        traj_sst = traject.SST.values
+        traj_sst_times = traject.datetime_UTC.values[np.isfinite(traj_sst)]
+        traj_sst = traj_sst[np.isfinite(traj_sst)]
+        
+        # get trajectory skt
+        traj_skt = traject.skt.values
+        traj_skt_times = traject.datetime_UTC.values[np.isfinite(traj_skt)]
+        traj_skt = traj_skt[np.isfinite(traj_skt)]
+
         # interpolate trajectory onto GOES scantimes
         traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,central_img_time)
 
@@ -291,10 +306,18 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
         longitudes[:len(traj_interp[1]),i] = traj_interp[1]
         latitudes[:len(traj_interp[2]),i] = traj_interp[2]
 
+        # interpolate sst onto GOES scantimes (cubic spline interpolation)
+        t_interp = central_img_time[(central_img_time>traj_sst_times[0])*(central_img_time<traj_sst_times[-1])]
+        sst[:len(t_interp),i] = spline_interp(traj_sst_times,traj_sst,t_interp)
+        t_interp = central_img_time[(central_img_time>traj_skt_times[0])*(central_img_time<traj_skt_times[-1])]
+        skt[:len(t_interp),i] = spline_interp(traj_skt_times,traj_skt,t_interp)
+
     ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
                                     longitude=(["Time","N_Trajectories"],longitudes),
                                     latitude=(["Time","N_Trajectories"],latitudes),
-                                    datetime_UTC=(["Time","N_Trajectories"],datetime_UTC)),
+                                    datetime_UTC=(["Time","N_Trajectories"],datetime_UTC),
+                                    sst=(["Time","N_Trajectories"],sst),
+                                    skt=(["Time","N_Trajectories"],skt)),
                       attrs=dict(description="Trajectory data interpolated on GOES images"))
 
     return ds.dropna(dim="Time",how="all")
@@ -341,6 +364,23 @@ def temp_interp_2D(t,x,y,t_hr):
         y_interp[j] = y[prev_traj_idx] + interp_factor*(y[next_traj_idx]-y[prev_traj_idx])
     
     return t_interp, x_interp, y_interp
+
+def spline_interp(t_data,data,t_interp):
+    """
+    Spline interpolation using CubicSpline from Scipy. 
+
+    Input:
+    -----------------------------------------------------------------------------
+    - t_data                independent variable (e.g. times with available data)
+    - data                  dependent variable
+    - t_interp              times to interpolate on
+    
+    Output:
+    -----------------------------------------------------------------------------
+    - interp_data           interpolated data
+    """
+    cs = CubicSpline(t_data,data)
+    return cs(t_interp)
 
 def get_goes_ref_ds(years,months,margin=4):
     """
