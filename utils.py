@@ -5,6 +5,7 @@ Useful functions for trajectory processing and cloudmetrics computation.
 import numpy as np
 import xarray as xr
 import fsspec
+from datetime import datetime
 
 def where_both(condition_1,condition_2):
     return np.where(np.where(condition_1,True,False)*np.where(condition_2,True,False))
@@ -57,3 +58,76 @@ def generate_url_list(globsearch_string):
         return flist
     else:
         return flist
+    
+
+def open_GOES_image(datetime):
+    """
+    Open GOES image closest to given time.
+    """
+    # open reference dataset with GOES scantimes
+    file_path = "~/Data/goes16_reference/goes_ref_ds.nc"
+    goes_ref_ds = xr.open_dataset(file_path)
+
+    # check if there is an image close enough
+    time_diff = np.min(np.abs(goes_ref_ds.middletime_scan.values-datetime))/10**9
+    if time_diff > 10*60:
+        print(f"No image +-10 min around {datetime}!")
+        return
+    
+    # find index of closest image
+    ref_idx = np.argmin(np.abs(goes_ref_ds.middletime_scan.values-datetime))
+    datestring = str(goes_ref_ds.isel(time=ref_idx).datestring.values)
+    year = datestring[:4]
+    dayoftheyear = convert_datestring_to_dayoftheyear(datestring)
+    time_idx = goes_ref_ds.isel(time=ref_idx).t_index.values
+
+    # open image
+    file_path = f"/scratch-shared/rmeier/Data/GOES-CMIP-C13-Tropical-North-Atlantic/daily/{year}/OR_ABI-L2-CMIPF-M6C13_G16_{dayoftheyear}.nc"
+    CMIPF = xr.open_dataset(file_path).isel(t=time_idx)
+
+    file_path = f"/scratch-shared/rmeier/Data/GOES-ACM-Tropical-North-Atlantic/daily/{year}/OR_ABI-L2-ACMF-M6_G16_{dayoftheyear}.nc"
+    ACMF = xr.open_dataset(file_path).isel(t=time_idx)
+
+    return CMIPF, ACMF
+
+
+def convert_datestring_to_dayoftheyear(datestring):
+    return datetime.strptime(datestring,"%Y%m%d").strftime("%j")
+
+
+def get_centered_window(arr, k):
+    """
+    Extracts a k x k square window centered at the middle of a 2D array.
+    If the window exceeds array bounds, it is NaN-padded.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Input 2D array of shape (M, N), possibly containing NaNs.
+    k : int
+        Size of the square window (must be positive).
+
+    Returns
+    -------
+    window : numpy.ndarray
+        Extracted k x k window with NaN-padding if necessary.
+    """
+    M, N = arr.shape
+    i, j = M // 2, N // 2  # Center of the array
+    half_k = k // 2
+
+    # Define window boundaries in the original array
+    top, bottom = max(0, i - half_k), min(M, i + half_k)
+    left, right = max(0, j - half_k), min(N, j + half_k)
+
+    # Compute valid region indices in the output window
+    top_pad, bottom_pad = max(0, half_k - i), max(0, (i + half_k + 1) - M - 1)
+    left_pad, right_pad = max(0, half_k - j), max(0, (j + half_k + 1) - N - 1)
+
+    # Create a NaN-padded output window
+    window = np.full((k, k), np.nan, dtype=arr.dtype)
+
+    # Copy valid region into the output window
+    window[top_pad:k-bottom_pad, left_pad:k-right_pad] = arr[top:bottom, left:right]
+
+    return window
