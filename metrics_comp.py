@@ -15,24 +15,24 @@ import os
 import resource
 from line_profiler import LineProfiler
 
-from utils import where_both, extract_frame
-from trajectories import interpolate_trajects, add_datetime, get_goes_ref_ds
+from utils import extract_frame, get_centered_window
 
 def main():
     # set inputs
     data_dir = "/scratch-shared/rmeier/Data/GOES-CMIP-C13-Tropical-North-Atlantic/daily/"
-    ref_dir = "data/goes_reference/"
-    traj_dir = "data/trajectories/"
-    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2020_intp"
+    ref_dir = "/home/rmeier/Data/goes16_reference/"
+    traj_dir = "/home/rmeier/Data/Trajectories/"
+    traj_file_name = "test_trajectory_Dec_Jan_2020"
     save_freq = 100 # save after every 100 images
     framesize = 5
-    accessmode= "no access" # "netCDF"
+    accessmode= "netCDF" 
+    comp_all_metrics = False
     profiler = False
 
     start = time.time()
 
     if profiler:
-        initialize line profiler
+        #initialize line profiler
         lp = LineProfiler()
         lp_wrapper = lp(compute_metrics)
 
@@ -49,12 +49,12 @@ def main():
     
     # compute
     if profiler:
-        res_trajects = lp_wrapper(trajects,goes_ref_ds,data_dir,traj_dir,framesize,save_freq,accessmode)
+        res_trajects = lp_wrapper(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize,save_freq,accessmode,comp_all_metrics)
         os.remove(traj_dir + traj_file_name + "_with_metrics.nc")
         res_trajects.to_netcdf(traj_dir + traj_file_name + "_with_metrics.nc")
         lp.print_stats()
     else:
-        res_trajects = compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,framesize,save_freq,accessmode)
+        res_trajects = compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize,save_freq,accessmode,comp_all_metrics)
         os.remove(traj_dir + traj_file_name + "_with_metrics.nc")
         res_trajects.to_netcdf(traj_dir + traj_file_name + "_with_metrics.nc")
  
@@ -62,7 +62,7 @@ def main():
     print("memory usage:", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss, "Kb")
 
 
-def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize=5,save_freq=100,accessmode="netCDF"):
+def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize=5,save_freq=100,accessmode="netCDF",comp_all_metrics=False):
     """
     Computes metrics on interpolated trajectories and gives out the trajectory dataset with metrics.
 
@@ -100,15 +100,15 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
     N_Trajectories = trajects.sizes["N_Trajectories"]
     N_timesteps = trajects.sizes["Time"]
     N_masks = 3
-    N_open_sky_methods = 3
     
     # initialize metric arrays 
     # scalar statistical metrics
     mean_BT = np.full((N_timesteps,N_Trajectories),np.nan)
     var_BT = np.full((N_timesteps,N_Trajectories),np.nan)
     BT_5_perc = np.full((N_timesteps,N_Trajectories),np.nan)
-    skew_BT = np.full((N_timesteps,N_Trajectories),np.nan)
-    kurt_BT = np.full((N_timesteps,N_Trajectories),np.nan)
+    if comp_all_metrics:
+        skew_BT = np.full((N_timesteps,N_Trajectories),np.nan)
+        kurt_BT = np.full((N_timesteps,N_Trajectories),np.nan)
     
     # scalar spectral metrics
     spec_len_median = np.full((N_timesteps,N_Trajectories),np.nan)
@@ -117,19 +117,22 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
     # cloud mask metrics
     cloud_frac = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     hcf = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
-    open_sky = np.full((N_timesteps,N_Trajectories,N_masks,N_open_sky_methods),np.nan)
-    open_sky_rad = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+    open_sky_max = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+    open_sky_perc = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+    open_sky_mean = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+    #open_sky_rad = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+    cloud_depth_est = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     fractal_dim = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
 
     # object based metrics
     l_max = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
-    L_mean = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+    l_mean = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     num_objects = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     iorg = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
-    scai = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
-    max_RDF = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
-    mean_perimeter = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
-    cop = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+    if comp_all_metrics:
+        scai = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+        mean_perimeter = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
+        cop = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     
     # get the relevant GOES image period
     goes_ref_ds = goes_ref_ds.sel(time=slice(trajects.datetime_UTC.min(skipna=True).values,
@@ -198,64 +201,90 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                 elif accessmode == "json":
                     CMIP = CMIPF.subset_region_from_latlon_extents(extent, unit="degree")
                 
-                # compute cloud mask
+                # compute cloud masks
                 CMI = CMIP.CMI.values
-                cloud_upper_thresh = [290]
-                cloud_lower_thresh = [280]
+                gauss_cloud_thresh = traj.skt.values - 6.7 
+                cloud_upper_thresh = [290,gauss_cloud_thresh,gauss_cloud_thresh-2.5] #,gauss_cloud_thresh]
+                cloud_lower_thresh = [280,270,270] #,gauss_cloud_thresh-15]
+                
+                finite_mask = np.isfinite(CMI)
+                no_cirrus_mask = finite_mask * (CMI>270)
 
-                mask = [np.where(np.isfinite(CMI),1*((CMI < 290)&(CMI > 280)),CMI)]
+                masks = []
+                for j in range(N_masks):
+                    mask = np.where(finite_mask,
+                                    (CMI < cloud_upper_thresh[j])*(CMI > cloud_lower_thresh[j]),
+                                    np.nan)
+                    masks.append(mask) 
                 
                 # compute the metrics
-                mean_BT = clmt.scalar.mean(CMI)
-                var_BT = clmt.scalar.var(CMI)
-                BT_5_perc = clmt.scalar.perc(CMI,5)
-                skew_BT = clmt.scalar.skew(CMI)
-                kurt_BT = clmt.scalar.kurtosis(CMI)
+                mean_BT[time_indices[i],traj_indices[i]] = clmt.scalar.mean(CMI,mask=no_cirrus_mask)
+                var_BT[time_indices[i],traj_indices[i]] = clmt.scalar.var(CMI,mask=no_cirrus_mask)
+                BT_5_perc[time_indices[i],traj_indices[i]] = clmt.scalar.perc(CMI,5,mask=no_cirrus_mask)
+                if comp_all_metrics:
+                    skew_BT[time_indices[i],traj_indices[i]] = clmt.scalar.skew(CMI,mask=no_cirrus_mask)
+                    kurt_BT[time_indices[i],traj_indices[i]] = clmt.scalar.kurtosis(CMI,mask=no_cirrus_mask)
 
-                spectral_metrics = clmt.scalar.compute_all_spectral(CMI)
-                spec_len_median = spectral_metrics[3]
-                spec_len_moment = spectral_metrics[4]
+                # apply square window to scalar field for spectral metric computation
+                CMI_centered = get_centered_window(CMI,int(min(CMI.shape)*0.5/2)*2)
+
+                # compute spectral metrics
+                spec_len_moment[time_indices[i],traj_indices[i]] = clmt.scalar.compute_spectral_length_moment(CMI_centered)
 
                 for j in range(N_masks):
-                    cloud_frac[time_indices[i],traj_indices[i],j] = clmt.mask.cloud_fraction(mask=mask[j])
-                    hcf[time_indices[i],traj_indices[i],j] = high_cloud_fraction(CMI,280)
-                    open_sky[time_indices[i],traj_indices[i],j] = clmt.mask.open_sky_stats(mask=mask[j])
-                    #open_sky_rad
-                    fractal_dim[time_indices[i],traj_indices[i],j] = clmt.mask.fractal_dimension(mask=mask[j])
+                    cloud_depth_est[time_indices[i],traj_indices[i],j] = (cloud_upper_thresh[j] - clmt.scalar.perc(CMI,5,mask=no_cirrus_mask)) / 5
+                    cloud_frac[time_indices[i],traj_indices[i],j] = clmt.mask.cloud_fraction(mask=masks[j])
+                    hcf[time_indices[i],traj_indices[i],j] = high_cloud_fraction(CMI,cloud_lower_thresh[j%3])
+                    open_sky = clmt.mask.open_sky_stats(mask=masks[j])
+                    open_sky_max[time_indices[i],traj_indices[i],j] = open_sky[0]
+                    open_sky_perc[time_indices[i],traj_indices[i],j] = open_sky[1]
+                    open_sky_mean[time_indices[i],traj_indices[i],j] = open_sky[2]
+                    #open_sky_rad[time_indices[i],traj_indices[i],j] = clmt.mask.open_sky_rad(mask=masks[j])
+                    fractal_dim[time_indices[i],traj_indices[i],j] = clmt.mask.fractal_dimension(mask=masks[j])
 
-                    if len(np.where(mask[j]==1)[0]) > 0:
-                        l_max[time_indices[i],traj_indices[i],j] = clmt.mask.max_object_length_scale(mask=mask[j])
-                        L_mean[time_indices[i],traj_indices[i],j] = clmt.mask.mean_object_length_scale(mask=mask[j])
-                        num_objects[time_indices[i],traj_indices[i],j] = clmt.mask.num_objects(mask=mask[j])
-                        iorg[time_indices[i],traj_indices[i],j] = clmt.mask.iorg_objects(mask=mask[j])
-                        scai[time_indices[i],traj_indices[i],j] = clmt.mask.scai_objects(mask=mask[j])
-                        cop[time_indices[i],traj_indices[i],j] = clmt.mask.cop_objects(mask=mask[j])
-                        mean_perimeter[time_indices[i],traj_indices[i],j] = clmt.mask.mean_object_perimeter_length(mask=mask[j])
+                    object_mask = np.where(np.isfinite(masks[j]),masks[j],0)
+                    if len(np.argwhere(object_mask==1)) > 0:
+                        l_max[time_indices[i],traj_indices[i],j] = clmt.mask.max_object_length_scale(mask=object_mask,periodic_domain=False)
+                        l_mean[time_indices[i],traj_indices[i],j] = clmt.mask.mean_object_length_scale(mask=object_mask,periodic_domain=False)
+                        num_objects[time_indices[i],traj_indices[i],j] = clmt.mask.num_objects(mask=object_mask,periodic_domain=False)
+                        iorg[time_indices[i],traj_indices[i],j] = clmt.mask.iorg_objects(mask=object_mask,periodic_domain=False)
+                        if comp_all_metrics:
+                            scai[time_indices[i],traj_indices[i],j] = clmt.mask.scai_objects(mask=object_mask,periodic_domain=False)
+                            cop[time_indices[i],traj_indices[i],j] = clmt.mask.cop_objects(mask=object_mask,periodic_domain=False)
+                            mean_perimeter[time_indices[i],traj_indices[i],j] = clmt.mask.mean_object_perimeter_length(mask=object_mask,periodic_domain=False)
         
         if (goes_index%save_freq) == 0:
             print(str(datetime.now())+": Saving...")
             res_trajects = trajects.assign(variables=dict(
-                                                        mean_BT=(["Time","N_Trajectories"],mean_BT),
-                                                        var_BT=(["Time","N_Trajectories"],var_BT),
-                                                        BT_5_perc=(["Time","N_Trajectories"],BT_5_perc),
-                                                        skew_BT=(["Time","N_Trajectories"],skew_BT),
-                                                        kurt_BT=(["Time","N_Trajectories"],kurt_BT),
-                                                        spec_len_median=(["Time","N_Trajectories"],spec_len_median),
-                                                        spec_len_moment=(["Time","N_Trajectories"],spec_len_moment),
-                                                        cloud_fraction=(["Time","N_Trajectories"],cloud_frac),
-                                                        hcf=(["Time","N_Trajectories","Mask"],hcf),
-                                                        open_sky=(["Time","N_Trajectories","Mask","open_sky_method"],open_sky),
-                                                        #open_sky_rad=(["Time","N_Trajectories","Mask"],open_sky_rad)
-                                                        fractal_dim=(["Time","N_Trajectories","Mask"],fractal_dim),
-                                                        l_max=(["Time","N_Trajectories","Mask"],l_max),
-                                                        l_mean=(["Time","N_Trajectories","Mask"],L_mean),
-                                                        num_objects=(["Time","N_Trajectories","Mask"],num_objects),
-                                                        iorg=(["Time","N_Trajectories","Mask"],iorg),      
-                                                        scai=(["Time","N_Trajectories","Mask"],scai),
-                                                        cop=(["Time","N_Trajectories","Mask"],cop),
-                                                        mean_perimeter=(["Time","N_Trajectories","Mask"],mean_perimeter)
-                                                        )
+                                                mean_BT=(["Time","N_Trajectories"],mean_BT),
+                                                var_BT=(["Time","N_Trajectories"],var_BT),
+                                                BT_5_perc=(["Time","N_Trajectories"],BT_5_perc),
+                                                spec_len_median=(["Time","N_Trajectories"],spec_len_median),
+                                                spec_len_moment=(["Time","N_Trajectories"],spec_len_moment),
+                                                cloud_fraction=(["Time","N_Trajectories","Mask"],cloud_frac),
+                                                hcf=(["Time","N_Trajectories","Mask"],hcf),
+                                                open_sky_max=(["Time","N_Trajectories","Mask"],open_sky_max),
+                                                open_sky_perc=(["Time","N_Trajectories","Mask"],open_sky_perc),
+                                                open_sky_mean=(["Time","N_Trajectories","Mask"],open_sky_mean),
+                                                #open_sky_rad=(["Time","N_Trajectories","Mask"],open_sky_rad),
+                                                cloud_depth_est=(["Time","N_Trajectories","Mask"],cloud_depth_est),
+                                                fractal_dim=(["Time","N_Trajectories","Mask"],fractal_dim),
+                                                l_max=(["Time","N_Trajectories","Mask"],l_max),
+                                                l_mean=(["Time","N_Trajectories","Mask"],l_mean),
+                                                num_objects=(["Time","N_Trajectories","Mask"],num_objects),
+                                                iorg=(["Time","N_Trajectories","Mask"],iorg)
+                                                )
                                             )
+            if comp_all_metrics:
+                res_trajects = res_trajects.assign(variables=dict(
+                                                skew_BT=(["Time","N_Trajectories"],skew_BT),
+                                                kurt_BT=(["Time","N_Trajectories"],kurt_BT),     
+                                                scai=(["Time","N_Trajectories","Mask"],scai),
+                                                cop=(["Time","N_Trajectories","Mask"],cop),
+                                                mean_perimeter=(["Time","N_Trajectories","Mask"],mean_perimeter)
+                                                )
+                                            )
+                
             if len(glob.glob(traj_dir + traj_file_name + "_with_metrics.nc")) > 0:
                 os.remove(traj_dir + traj_file_name +"_with_metrics.nc")
             res_trajects.to_netcdf(traj_dir + traj_file_name +"_with_metrics.nc")
@@ -266,25 +295,31 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                                                 mean_BT=(["Time","N_Trajectories"],mean_BT),
                                                 var_BT=(["Time","N_Trajectories"],var_BT),
                                                 BT_5_perc=(["Time","N_Trajectories"],BT_5_perc),
-                                                skew_BT=(["Time","N_Trajectories"],skew_BT),
-                                                kurt_BT=(["Time","N_Trajectories"],kurt_BT),
                                                 spec_len_median=(["Time","N_Trajectories"],spec_len_median),
                                                 spec_len_moment=(["Time","N_Trajectories"],spec_len_moment),
-                                                cloud_fraction=(["Time","N_Trajectories"],cloud_frac),
+                                                cloud_fraction=(["Time","N_Trajectories","Mask"],cloud_frac),
                                                 hcf=(["Time","N_Trajectories","Mask"],hcf),
-                                                open_sky=(["Time","N_Trajectories","Mask","open_sky_method"],open_sky),
-                                                #open_sky_rad=(["Time","N_Trajectories","Mask"],open_sky_rad)
+                                                open_sky_max=(["Time","N_Trajectories","Mask"],open_sky_max),
+                                                open_sky_perc=(["Time","N_Trajectories","Mask"],open_sky_perc),
+                                                open_sky_mean=(["Time","N_Trajectories","Mask"],open_sky_mean),
+                                                #open_sky_rad=(["Time","N_Trajectories","Mask"],open_sky_rad),
+                                                cloud_depth_est=(["Time","N_Trajectories","Mask"],cloud_depth_est),
                                                 fractal_dim=(["Time","N_Trajectories","Mask"],fractal_dim),
                                                 l_max=(["Time","N_Trajectories","Mask"],l_max),
-                                                l_mean=(["Time","N_Trajectories","Mask"],L_mean),
+                                                l_mean=(["Time","N_Trajectories","Mask"],l_mean),
                                                 num_objects=(["Time","N_Trajectories","Mask"],num_objects),
-                                                iorg=(["Time","N_Trajectories","Mask"],iorg),      
-                                                scai=(["Time","N_Trajectories","Mask"],scai),
-                                                cop=(["Time","N_Trajectories","Mask"],cop),
-                                                mean_perimeter=(["Time","N_Trajectories","Mask"],mean_perimeter)
+                                                iorg=(["Time","N_Trajectories","Mask"],iorg)
                                                 )
                                             ) 
-        
+    if comp_all_metrics:
+        res_trajects = res_trajects.assign(variables=dict(
+                                        skew_BT=(["Time","N_Trajectories"],skew_BT),
+                                        kurt_BT=(["Time","N_Trajectories"],kurt_BT),     
+                                        scai=(["Time","N_Trajectories","Mask"],scai),
+                                        cop=(["Time","N_Trajectories","Mask"],cop),
+                                        mean_perimeter=(["Time","N_Trajectories","Mask"],mean_perimeter)
+                                        )
+                                    )    
         
     return res_trajects
 
