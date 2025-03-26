@@ -7,3 +7,6 @@ __pycache__/
 
 # Profiling
 *.txt
+
+# Unused or untested code
+*_alpha.py
