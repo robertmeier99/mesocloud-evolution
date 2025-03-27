@@ -2,7 +2,11 @@
 Computation of cloudmetrics along interpolated ERA5 trajectories.
 """
 import sys
-sys.path.append("..")
+import os
+
+# Get the parent directory and add it to sys.path
+PARENT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(PARENT_DIR)
 
 import cloudmetrics.cloudmetrics as clmt
 import numpy as np
@@ -21,8 +25,8 @@ def main():
     # set inputs
     data_dir = "/scratch-shared/rmeier/Data/GOES-CMIP-C13-Tropical-North-Atlantic/daily/"
     ref_dir = "/home/rmeier/Data/goes16_reference/"
-    traj_dir = "/home/rmeier/Data/Trajectories/"
-    traj_file_name = "test_trajectory_Dec_Jan_2020"
+    traj_dir = "/home/rmeier/Data/Trajectories/NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2018-2022_subsets/"
+    traj_file_name = "subset_0" # without .nc
     save_freq = 100 # save after every 100 images
     framesize = 5
     accessmode= "netCDF" 
@@ -99,9 +103,19 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
     # Get number and maximum size of the trajectories
     N_Trajectories = trajects.sizes["N_Trajectories"]
     N_timesteps = trajects.sizes["Time"]
-    N_masks = 3
+    N_masks = 2
     
     # initialize metric arrays 
+    
+    # comparisons with Master thesis & Bony et al.
+    l_mean_comp = np.full((N_timesteps,N_Trajectories),np.nan)
+    cloud_frac_comp = np.full((N_timesteps,N_Trajectories),np.nan)
+    hcf_comp = np.full((N_timesteps,N_Trajectories),np.nan)
+    iorg_comp = np.full((N_timesteps,N_Trajectories),np.nan)
+
+    # high cloud fraction
+    hcf = np.full((N_timesteps,N_Trajectories),np.nan)
+
     # scalar statistical metrics
     mean_BT = np.full((N_timesteps,N_Trajectories),np.nan)
     var_BT = np.full((N_timesteps,N_Trajectories),np.nan)
@@ -116,7 +130,6 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
 
     # cloud mask metrics
     cloud_frac = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
-    hcf = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     open_sky_max = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     open_sky_perc = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     open_sky_mean = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
@@ -204,26 +217,45 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                 # compute cloud masks
                 CMI = CMIP.CMI.values
                 gauss_cloud_thresh = traj.skt.values - 6.7 
-                cloud_upper_thresh = [290,gauss_cloud_thresh,gauss_cloud_thresh-2.5] #,gauss_cloud_thresh]
-                cloud_lower_thresh = [280,270,270] #,gauss_cloud_thresh-15]
+                cloud_upper_thresh = [gauss_cloud_thresh,gauss_cloud_thresh-2.5,290] 
+                cloud_lower_thresh = [270,270,280] 
                 
                 finite_mask = np.isfinite(CMI)
                 no_cirrus_mask = finite_mask * (CMI>270)
 
                 masks = []
-                for j in range(N_masks):
+                for j in range(N_masks+1):
                     mask = np.where(finite_mask,
                                     (CMI < cloud_upper_thresh[j])*(CMI > cloud_lower_thresh[j]),
                                     np.nan)
                     masks.append(mask) 
                 
                 # compute the metrics
-                mean_BT[time_indices[i],traj_indices[i]] = clmt.scalar.mean(CMI,mask=no_cirrus_mask)
-                var_BT[time_indices[i],traj_indices[i]] = clmt.scalar.var(CMI,mask=no_cirrus_mask)
-                BT_5_perc[time_indices[i],traj_indices[i]] = clmt.scalar.perc(CMI,5,mask=no_cirrus_mask)
-                if comp_all_metrics:
-                    skew_BT[time_indices[i],traj_indices[i]] = clmt.scalar.skew(CMI,mask=no_cirrus_mask)
-                    kurt_BT[time_indices[i],traj_indices[i]] = clmt.scalar.kurtosis(CMI,mask=no_cirrus_mask)
+                if np.sum(no_cirrus_mask) == 0:
+                    # only high clouds
+                    hcf[time_indices[i],traj_indices[i]] = 1
+                    hcf_comp[time_indices[i],traj_indices[i]] = 1
+                    continue
+                else:
+                    # high cloud fraction
+                    hcf[time_indices[i],traj_indices[i]] = clmt.scalar.high_cloud_fraction(CMI,cloud_lower_thresh[0])
+                    hcf_comp[time_indices[i],traj_indices[i]] = clmt.scalar.high_cloud_fraction(CMI,280)
+
+                    # BT statistics (Cirrus excluded)
+                    mean_BT[time_indices[i],traj_indices[i]] = clmt.scalar.mean(CMI,mask=no_cirrus_mask)
+                    var_BT[time_indices[i],traj_indices[i]] = clmt.scalar.var(CMI,mask=no_cirrus_mask)
+                    BT_5_perc[time_indices[i],traj_indices[i]] = clmt.scalar.perc(CMI,5,mask=no_cirrus_mask)
+                    if comp_all_metrics:
+                        skew_BT[time_indices[i],traj_indices[i]] = clmt.scalar.skew(CMI,mask=no_cirrus_mask)
+                        kurt_BT[time_indices[i],traj_indices[i]] = clmt.scalar.kurtosis(CMI,mask=no_cirrus_mask)
+
+                    # compute comparison metrics
+                    object_mask = np.where(np.isfinite(masks[2]),masks[2],0)
+
+                    cloud_frac_comp[time_indices[i],traj_indices[i]] = clmt.mask.cloud_fraction(mask=mask[2])
+                    l_mean_comp[time_indices[i],traj_indices[i]] = clmt.mask.mean_object_length_scale(mask=object_mask,periodic_domain=False)
+                    iorg_comp[time_indices[i],traj_indices[i]] = clmt.mask.iorg_objects(mask=object_mask,periodic_domain=False)
+
 
                 # apply square window to scalar field for spectral metric computation
                 CMI_centered = get_centered_window(CMI,int(min(CMI.shape)*0.5/2)*2)
@@ -234,7 +266,6 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                 for j in range(N_masks):
                     cloud_depth_est[time_indices[i],traj_indices[i],j] = (cloud_upper_thresh[j] - clmt.scalar.perc(CMI,5,mask=no_cirrus_mask)) / 5
                     cloud_frac[time_indices[i],traj_indices[i],j] = clmt.mask.cloud_fraction(mask=masks[j])
-                    hcf[time_indices[i],traj_indices[i],j] = high_cloud_fraction(CMI,cloud_lower_thresh[j%3])
                     open_sky = clmt.mask.open_sky_stats(mask=masks[j])
                     open_sky_max[time_indices[i],traj_indices[i],j] = open_sky[0]
                     open_sky_perc[time_indices[i],traj_indices[i],j] = open_sky[1]
@@ -261,8 +292,12 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                                                 BT_5_perc=(["Time","N_Trajectories"],BT_5_perc),
                                                 spec_len_median=(["Time","N_Trajectories"],spec_len_median),
                                                 spec_len_moment=(["Time","N_Trajectories"],spec_len_moment),
+                                                hcf=(["Time","N_Trajectories"],hcf),
+                                                hcf_comp=(["Time","N_Trajectories"],hcf_comp),
+                                                cloud_frac_comp=(["Time","N_Trajectories"],cloud_frac_comp),
+                                                l_mean_comp=(["Time","N_Trajectories"],l_mean_comp),
+                                                iorg_comp=(["Time","N_Trajectories"],iorg_comp),
                                                 cloud_fraction=(["Time","N_Trajectories","Mask"],cloud_frac),
-                                                hcf=(["Time","N_Trajectories","Mask"],hcf),
                                                 open_sky_max=(["Time","N_Trajectories","Mask"],open_sky_max),
                                                 open_sky_perc=(["Time","N_Trajectories","Mask"],open_sky_perc),
                                                 open_sky_mean=(["Time","N_Trajectories","Mask"],open_sky_mean),
@@ -297,8 +332,12 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                                                 BT_5_perc=(["Time","N_Trajectories"],BT_5_perc),
                                                 spec_len_median=(["Time","N_Trajectories"],spec_len_median),
                                                 spec_len_moment=(["Time","N_Trajectories"],spec_len_moment),
+                                                hcf=(["Time","N_Trajectories"],hcf),
+                                                hcf_comp=(["Time","N_Trajectories"],hcf_comp),
+                                                cloud_frac_comp=(["Time","N_Trajectories"],cloud_frac_comp),
+                                                l_mean_comp=(["Time","N_Trajectories"],l_mean_comp),
+                                                iorg_comp=(["Time","N_Trajectories"],iorg_comp),
                                                 cloud_fraction=(["Time","N_Trajectories","Mask"],cloud_frac),
-                                                hcf=(["Time","N_Trajectories","Mask"],hcf),
                                                 open_sky_max=(["Time","N_Trajectories","Mask"],open_sky_max),
                                                 open_sky_perc=(["Time","N_Trajectories","Mask"],open_sky_perc),
                                                 open_sky_mean=(["Time","N_Trajectories","Mask"],open_sky_mean),
@@ -322,25 +361,6 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                                     )    
         
     return res_trajects
-
-
-def high_cloud_fraction(temperatures,threshold):
-    """
-    Computes the fraction of pixels with lower brightness temperature 
-    (therefore higher in altitude) than a threshold temperature.
-    
-    Parameters
-    ----------
-    - temperatures: array_like
-        Brightness temperatures per pixel from satellite image
-    - threshold: scalar
-        Threshold temperature (exclusive)
-
-    Return
-    ------
-    - fraction of pixels below threshold temperature
-    """
-    return np.histogram(temperatures, bins=[0,threshold,400],density=True)[0][0]*threshold
 
 
 if __name__ == "__main__":
