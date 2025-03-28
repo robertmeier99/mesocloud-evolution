@@ -26,7 +26,7 @@ def main():
     data_dir = "/scratch-shared/rmeier/Data/GOES-CMIP-C13-Tropical-North-Atlantic/daily/"
     ref_dir = "/home/rmeier/Data/goes16_reference/"
     traj_dir = "/home/rmeier/Data/Trajectories/NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2018-2022_subsets/"
-    traj_file_name = "subset_0" # without .nc
+    traj_file_name = "subset_1" # without .nc
     save_freq = 100 # save after every 100 images
     framesize = 5
     accessmode= "netCDF" 
@@ -125,7 +125,6 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
         kurt_BT = np.full((N_timesteps,N_Trajectories),np.nan)
     
     # scalar spectral metrics
-    spec_len_median = np.full((N_timesteps,N_Trajectories),np.nan)
     spec_len_moment = np.full((N_timesteps,N_Trajectories),np.nan)
 
     # cloud mask metrics
@@ -290,7 +289,6 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                                                 mean_BT=(["Time","N_Trajectories"],mean_BT),
                                                 var_BT=(["Time","N_Trajectories"],var_BT),
                                                 BT_5_perc=(["Time","N_Trajectories"],BT_5_perc),
-                                                spec_len_median=(["Time","N_Trajectories"],spec_len_median),
                                                 spec_len_moment=(["Time","N_Trajectories"],spec_len_moment),
                                                 hcf=(["Time","N_Trajectories"],hcf),
                                                 hcf_comp=(["Time","N_Trajectories"],hcf_comp),
@@ -330,7 +328,6 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                                                 mean_BT=(["Time","N_Trajectories"],mean_BT),
                                                 var_BT=(["Time","N_Trajectories"],var_BT),
                                                 BT_5_perc=(["Time","N_Trajectories"],BT_5_perc),
-                                                spec_len_median=(["Time","N_Trajectories"],spec_len_median),
                                                 spec_len_moment=(["Time","N_Trajectories"],spec_len_moment),
                                                 hcf=(["Time","N_Trajectories"],hcf),
                                                 hcf_comp=(["Time","N_Trajectories"],hcf_comp),
