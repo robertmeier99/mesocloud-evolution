@@ -18,6 +18,8 @@ import glob
 import os
 import resource
 from line_profiler import LineProfiler
+import warnings
+import traceback
 
 from utils import extract_frame, get_centered_window
 
@@ -26,9 +28,11 @@ def main():
     data_dir = "/scratch-shared/rmeier/Data/GOES-CMIP-C13-Tropical-North-Atlantic/daily/"
     ref_dir = "/home/rmeier/Data/goes16_reference/"
     traj_dir = "/home/rmeier/Data/Trajectories/NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2018-2022_subsets/"
-    traj_file_name = "subset_1" # without .nc
+    traj_file_name = "subset_13" # without .nc
     save_freq = 100 # save after every 100 images
+    save_extension = "_with_metrics_restarted.nc"
     framesize = 5
+    restart_time = np.datetime64("2021-01-14T01:35:04")
     accessmode= "netCDF" 
     comp_all_metrics = False
     profiler = False
@@ -41,6 +45,7 @@ def main():
         lp_wrapper = lp(compute_metrics)
 
     # get datasets
+    print(f"Loading {traj_file_name}")
     trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
     goes_ref_ds = xr.open_dataset(ref_dir + "goes_ref_ds.nc")
     
@@ -53,20 +58,20 @@ def main():
     
     # compute
     if profiler:
-        res_trajects = lp_wrapper(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize,save_freq,accessmode,comp_all_metrics)
-        os.remove(traj_dir + traj_file_name + "_with_metrics.nc")
-        res_trajects.to_netcdf(traj_dir + traj_file_name + "_with_metrics.nc")
+        res_trajects = lp_wrapper(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize,save_freq,save_extension,restart_time,accessmode,comp_all_metrics)
+        os.remove(traj_dir + traj_file_name + save_extension)
+        res_trajects.to_netcdf(traj_dir + traj_file_name + save_extension)
         lp.print_stats()
     else:
-        res_trajects = compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize,save_freq,accessmode,comp_all_metrics)
-        os.remove(traj_dir + traj_file_name + "_with_metrics.nc")
-        res_trajects.to_netcdf(traj_dir + traj_file_name + "_with_metrics.nc")
+        res_trajects = compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize,save_freq,save_extension,restart_time,accessmode,comp_all_metrics)
+        os.remove(traj_dir + traj_file_name + save_extension)
+        res_trajects.to_netcdf(traj_dir + traj_file_name + save_extension)
  
     print("programm completed in" + str(round(time.time()-start,0)) + "s.")
     print("memory usage:", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss, "Kb")
 
 
-def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize=5,save_freq=100,accessmode="netCDF",comp_all_metrics=False):
+def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,framesize=5,save_freq=100,save_extension="_with_metrics.nc",restart_time=None,accessmode="netCDF",comp_all_metrics=False):
     """
     Computes metrics on interpolated trajectories and gives out the trajectory dataset with metrics.
 
@@ -147,9 +152,14 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
         cop = np.full((N_timesteps,N_Trajectories,N_masks),np.nan)
     
     # get the relevant GOES image period
-    goes_ref_ds = goes_ref_ds.sel(time=slice(trajects.datetime_UTC.min(skipna=True).values,
+    if isinstance(restart_time, np.datetime64):
+        goes_ref_ds = goes_ref_ds.sel(time=slice(restart_time,
                                              trajects.datetime_UTC.max(skipna=True).values))
-    
+    else:
+        goes_ref_ds = goes_ref_ds.sel(time=slice(trajects.datetime_UTC.min(skipna=True).values,
+                                             trajects.datetime_UTC.max(skipna=True).values))    
+
+
     print(str(datetime.now())+": Initialization done")
 
     # iterating through the relevant GOES images
@@ -230,7 +240,10 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                     masks.append(mask) 
                 
                 # compute the metrics
-                if np.sum(no_cirrus_mask) == 0:
+                if np.sum(finite_mask) == 0:
+                    # full NaN field
+                    continue
+                elif np.sum(no_cirrus_mask) == 0:
                     # only high clouds
                     hcf[time_indices[i],traj_indices[i]] = 1
                     hcf_comp[time_indices[i],traj_indices[i]] = 1
@@ -252,8 +265,9 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                     object_mask = np.where(np.isfinite(masks[2]),masks[2],0)
 
                     cloud_frac_comp[time_indices[i],traj_indices[i]] = clmt.mask.cloud_fraction(mask=mask[2])
-                    l_mean_comp[time_indices[i],traj_indices[i]] = clmt.mask.mean_object_length_scale(mask=object_mask,periodic_domain=False)
-                    iorg_comp[time_indices[i],traj_indices[i]] = clmt.mask.iorg_objects(mask=object_mask,periodic_domain=False)
+                    if np.sum(object_mask) > 0:
+                        l_mean_comp[time_indices[i],traj_indices[i]] = clmt.mask.mean_object_length_scale(mask=object_mask,periodic_domain=False)
+                        iorg_comp[time_indices[i],traj_indices[i]] = clmt.mask.iorg_objects(mask=object_mask,periodic_domain=False)
 
 
                 # apply square window to scalar field for spectral metric computation
@@ -273,7 +287,7 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                     fractal_dim[time_indices[i],traj_indices[i],j] = clmt.mask.fractal_dimension(mask=masks[j])
 
                     object_mask = np.where(np.isfinite(masks[j]),masks[j],0)
-                    if len(np.argwhere(object_mask==1)) > 0:
+                    if np.sum(object_mask) > 0:
                         l_max[time_indices[i],traj_indices[i],j] = clmt.mask.max_object_length_scale(mask=object_mask,periodic_domain=False)
                         l_mean[time_indices[i],traj_indices[i],j] = clmt.mask.mean_object_length_scale(mask=object_mask,periodic_domain=False)
                         num_objects[time_indices[i],traj_indices[i],j] = clmt.mask.num_objects(mask=object_mask,periodic_domain=False)
@@ -318,9 +332,9 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
                                                 )
                                             )
                 
-            if len(glob.glob(traj_dir + traj_file_name + "_with_metrics.nc")) > 0:
-                os.remove(traj_dir + traj_file_name +"_with_metrics.nc")
-            res_trajects.to_netcdf(traj_dir + traj_file_name +"_with_metrics.nc")
+            if len(glob.glob(traj_dir + traj_file_name + save_extension)) > 0:
+                os.remove(traj_dir + traj_file_name + save_extension)
+            res_trajects.to_netcdf(traj_dir + traj_file_name + save_extension)
 
         print(str(datetime.now())+": " +str(int((goes_index+1)/len(goes_ref_ds.datestring)*100)) + "% done",end="\r")
         
@@ -359,6 +373,12 @@ def compute_metrics(trajects,goes_ref_ds,data_dir,traj_dir,traj_file_name,frames
         
     return res_trajects
 
+def warning_handler(message, category, filename, lineno, file=None, line=None):
+    print(f"Warning in {filename}, line {lineno}: {message}")
+    print("Stack trace:")
+    print("".join(traceback.format_stack()))
+
 
 if __name__ == "__main__":
+    #warnings.showwarning = warning_handler
     main()
