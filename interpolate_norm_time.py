@@ -10,26 +10,34 @@ import resource
 import time 
 
 def main():
-    # load cloudmetric dataset
-    file_path = "/home/rmeier1/PhD/Datasets/Catalogue_upload/Lagrangian_cloudmetrics_rounded_N.nc"
-    cloudmetric_ds = xr.open_dataset(file_path)
+    has_norm_time = True
 
-    start = time.time()
+    if has_norm_time == False:
+        # load cloudmetric dataset
+        file_path = "/home/rmeier1/PhD/Datasets/Catalogue_upload/Lagrangian_cloudmetrics_rounded_N.nc"
+        cloudmetric_ds = xr.open_dataset(file_path)
 
-    # add normalized time to dataset 
-    print("Adding normalized time...")
-    cloudmetric_ds = add_norm_time(cloudmetric_ds)
+        start = time.time()
 
-    # save intermediate step
-    save_path = "/home/rmeier1/PhD/Datasets/interp_data/cloudmetrics_with_norm_time.nc"
-    cloudmetric_ds.to_netcdf(save_path)
+        # add normalized time to dataset 
+        print("Adding normalized time...")
+        cloudmetric_ds = add_norm_time(cloudmetric_ds)
+
+        # save intermediate step
+        save_path = "/home/rmeier1/PhD/Datasets/interp_data/cloudmetrics_with_norm_time.nc"
+        cloudmetric_ds.to_netcdf(save_path)
+
+    else:
+        file_path = "/home/rmeier/Data/Metrics/cloudmetrics_with_norm_time.nc"
+        cloudmetric_ds = xr.open_dataset(file_path)
+
 
     # interpolate dataset on normalized time
     print("Interpolating...")
     cloudmetric_ds_interp = interpolate_dataset(cloudmetric_ds,interp_method="numpy")
 
     # saving dataset 
-    save_path = "/home/rmeier1/PhD/Datasets/interp_data/diurnal_cloudmetrics.nc"
+    save_path = "/home/rmeier/Data/Metrics/diurnal_cloudmetrics.nc"
     cloudmetric_ds_interp.to_netcdf(save_path)
 
     print("programm completed in" + str(round(time.time()-start,0)) + "s.")
