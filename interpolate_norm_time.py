@@ -10,8 +10,11 @@ import resource
 import time 
 
 def main():
-    has_norm_time = True
     work_remote = True
+    has_norm_time = False
+    has_mask = False
+    t_res = 0.04
+    interp_method = "numpy"
     
     start = time.time()
 
@@ -52,7 +55,7 @@ def main():
 
     # interpolate dataset on normalized time
     print("Interpolating...")
-    cloudmetric_ds_interp = interpolate_dataset(cloudmetric_ds,interp_method="numpy")
+    cloudmetric_ds_interp = interpolate_dataset(cloudmetric_ds,interp_method,t_res,has_mask)
 
     # saving dataset 
     if work_remote:
@@ -100,7 +103,7 @@ def add_norm_time(ds):
     return ds
 
 
-def interpolate_dataset(ds,interp_method,t_res=0.01):
+def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True):
     """
     Compute interpolated dataset variables on normalized times of given resolution.
     """
@@ -118,7 +121,8 @@ def interpolate_dataset(ds,interp_method,t_res=0.01):
     coords_dict["Norm_Time"] = (["Norm_Time"],t_interp_day)
     coords_dict["Day_ID"] = (["Day_ID"],day_id_unique)
     coords_dict["local_date"] = (["Day_ID"],np.full(shape=(N_days),fill_value=np.nan,dtype="datetime64[ns]"))
-    coords_dict["Mask"] = (["Mask"],ds.Mask.values)
+    if has_mask:
+        coords_dict["Mask"] = (["Mask"],ds.Mask.values)
 
     # initialize dictionary of interpolated variables
     var_dict = {}
@@ -142,13 +146,13 @@ def interpolate_dataset(ds,interp_method,t_res=0.01):
         nan_stop = np.argwhere(np.diff(traj_norm_time)>0.1)
         if len(nan_stop>0):
             nan_stop = traj_norm_time[nan_stop[0][0]]+t_res
-            t_interp = np.arange(np.ceil(np.nanmin(traj_norm_time)*100)/100,nan_stop,t_res)
+            t_interp = np.round(np.arange(np.ceil(np.nanmin(traj_norm_time)/t_res)*t_res,nan_stop,t_res),4)
         else:
-            t_interp = np.arange(np.ceil(np.nanmin(traj_norm_time)*100)/100,np.nanmax(traj_norm_time),t_res)
+            t_interp = np.round(np.arange(np.ceil(np.nanmin(traj_norm_time)/t_res)*t_res,np.nanmax(traj_norm_time),t_res),4)
 
         # compute indices for saving
         day_idx = np.searchsorted(np.unique(day_of_traj),t_interp.astype(int))
-        norm_time_idx = ((t_interp%1)*100).astype(int)
+        norm_time_idx = np.round((t_interp%1)/t_res).astype(int)
         day_id_indices = np.searchsorted(day_id_unique,np.unique(day_id)[day_idx])
         local_day_indices = np.searchsorted(day_id,np.unique(day_id)[day_idx])
 
