@@ -11,25 +11,43 @@ import time
 
 def main():
     has_norm_time = True
+    work_remote = True
+    
+    start = time.time()
 
-    if has_norm_time == False:
-        # load cloudmetric dataset
-        file_path = "/home/rmeier1/PhD/Datasets/Catalogue_upload/Lagrangian_cloudmetrics_rounded_N.nc"
+    file_name = "Lagrangian_CERES_data_rounded_N.nc"
+    norm_time_file_name = "CERES_data_with_norm_time.nc"
+    interp_file_name = "diurnal_CERES_data.nc"
+
+    if has_norm_time:
+        # load cloudmetrics with normalized time
+        if work_remote:
+            file_path = "/home/rmeier/Data/Metrics/" + norm_time_file_name
+        else:
+            file_path = "/home/rmeier1/PhD/Datasets/interp_data/" + norm_time_file_name
+
         cloudmetric_ds = xr.open_dataset(file_path)
 
-        start = time.time()
+    else:
+        # load cloudmetric dataset
+        if work_remote:
+            file_path = "/home/rmeier/Data/Metrics/" + file_name
+        else:
+            file_path = "/home/rmeier1/PhD/Datasets/Catalogue_upload/" + file_name
+        
+        cloudmetric_ds = xr.open_dataset(file_path)
 
         # add normalized time to dataset 
         print("Adding normalized time...")
         cloudmetric_ds = add_norm_time(cloudmetric_ds)
 
         # save intermediate step
-        save_path = "/home/rmeier1/PhD/Datasets/interp_data/cloudmetrics_with_norm_time.nc"
-        cloudmetric_ds.to_netcdf(save_path)
+        if work_remote:
+            save_path = "/home/rmeier/Data/Metrics/" + norm_time_file_name
+        else:
+            save_path = "/home/rmeier1/PhD/Datasets/interp_data/" + norm_time_file_name
 
-    else:
-        file_path = "/home/rmeier/Data/Metrics/cloudmetrics_with_norm_time.nc"
-        cloudmetric_ds = xr.open_dataset(file_path)
+        cloudmetric_ds.to_netcdf(save_path)
 
 
     # interpolate dataset on normalized time
@@ -37,7 +55,11 @@ def main():
     cloudmetric_ds_interp = interpolate_dataset(cloudmetric_ds,interp_method="numpy")
 
     # saving dataset 
-    save_path = "/home/rmeier/Data/Metrics/diurnal_cloudmetrics.nc"
+    if work_remote:
+        save_path = "/home/rmeier/Data/Metrics/" + interp_file_name
+    else:
+        save_path = "/home/rmeier1/PhD/Datasets/interp_data/" + interp_file_name
+
     cloudmetric_ds_interp.to_netcdf(save_path)
 
     print("programm completed in" + str(round(time.time()-start,0)) + "s.")
