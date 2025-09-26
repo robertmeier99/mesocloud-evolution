@@ -113,13 +113,19 @@ def interpolate_dataset(ds,interp_method,t_res=0.01):
         # get 1D time coordinates
         norm_time = ts.norm_time.values
         day_id = ts.day_id.values
+        day_of_traj = np.char.partition(day_id,"D")[:,2].astype(float)
 
         # compute normalized time of trajectory (monotone increase) and interpolation range
-        traj_norm_time = norm_time + np.char.partition(day_id,"D")[:,2].astype(float)
-        t_interp = np.arange(np.ceil(np.nanmin(traj_norm_time)*100)/100,np.nanmax(traj_norm_time),t_res)
+        traj_norm_time = norm_time + day_of_traj
+        nan_stop = np.argwhere(np.diff(traj_norm_time)>0.1)
+        if len(nan_stop>0):
+            nan_stop = traj_norm_time[nan_stop[0][0]]+t_res
+            t_interp = np.arange(np.ceil(np.nanmin(traj_norm_time)*100)/100,nan_stop,t_res)
+        else:
+            t_interp = np.arange(np.ceil(np.nanmin(traj_norm_time)*100)/100,np.nanmax(traj_norm_time),t_res)
 
         # compute indices for saving
-        day_idx = t_interp.astype(int)
+        day_idx = np.searchsorted(np.unique(day_of_traj),t_interp.astype(int))
         norm_time_idx = ((t_interp%1)*100).astype(int)
         day_id_indices = np.searchsorted(day_id_unique,np.unique(day_id)[day_idx])
         local_day_indices = np.searchsorted(day_id,np.unique(day_id)[day_idx])
