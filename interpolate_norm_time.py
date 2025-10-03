@@ -1,8 +1,9 @@
 import xarray as xr
 import pandas as pd
 import numpy as np
+from numba import njit, prange
 import matplotlib.pyplot as plt
-from astral import LocationInfo
+from astral import Observer
 import datetime
 from astral.sun import sun
 from functools import lru_cache
@@ -10,7 +11,7 @@ import resource
 import time 
 
 def main():
-    work_remote = True
+    work_remote = False
     has_norm_time = False
     has_mask = False
     t_res = 0.04
@@ -39,6 +40,7 @@ def main():
             file_path = "/home/rmeier1/PhD/Datasets/Catalogue_upload/" + file_name
         
         cloudmetric_ds = xr.open_dataset(file_path)
+        cloudmetric_ds = cloudmetric_ds
 
         # add normalized time to dataset 
         print("Adding normalized time...")
@@ -275,12 +277,14 @@ def sunrise_sunset_UTC_time(lon,lat,date_UTC):
     # convert from numpy.datetime64 to datetime.date
     date_UTC = date_UTC.astype(datetime.date)
 
-    # find UTC times of local sunrise and sunset and convert back to numpy.datetime64
-    loc = LocationInfo(latitude=lat, longitude=lon)
-    s = sun(loc.observer, date=date_UTC, tzinfo=loc.timezone)
+    # find UTC times of local sunrise and sunset
+    loc = Observer(latitude=lat, longitude=lon)
+    offset = datetime.timedelta(seconds=lon/180*12*60*60)
+    s = sun(loc, date=date_UTC, tzinfo=datetime.timezone(offset))
 
-    sunrise_UTC = np.datetime64(s['sunrise'].replace(tzinfo=None))
-    sunset_UTC = np.datetime64(s['sunset'].replace(tzinfo=None)) 
+    # convert back to numpy.datetime64
+    sunrise_UTC = np.datetime64((s['sunrise']-offset).replace(tzinfo=None))
+    sunset_UTC = np.datetime64((s['sunset']-offset).replace(tzinfo=None)) 
 
     return sunrise_UTC, sunset_UTC
 
