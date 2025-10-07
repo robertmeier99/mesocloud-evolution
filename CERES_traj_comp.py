@@ -13,14 +13,22 @@ from line_profiler import LineProfiler
 
 def main():
     # set inputs
-    data_path = "/home/rmeier1/PhD/Datasets/CERES/CERES_DJF_17-22.nc"
-    traj_dir = "/home/rmeier1/PhD/Datasets/interp_trajectories/"
-    save_dir = "/home/rmeier1/PhD/Datasets/CERES/"
-    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_CERES_interp_Dec-Feb_2017-2022"
+    remote = True
     area_weighted = False
     save_freq = 1000 # save after every 1000 trajectories
     framesize = 5
     profiler = False
+
+    if remote:
+        data_path = "/scratch/rmeier1/Data/CERES/CERES_DJF_17-22.nc"
+        traj_dir = "/scratch/rmeier1/Data/Trajectories/"
+        save_dir = "/scratch/rmeier1/Data/Trajectories/"
+        traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_CERES_interp_Dec-Feb_2017-2022"
+    else:
+        data_path = "/home/rmeier1/PhD/Datasets/CERES/CERES_DJF_17-22.nc"
+        traj_dir = "/home/rmeier1/PhD/Datasets/interp_trajectories/"
+        save_dir = "/home/rmeier1/PhD/Datasets/CERES/"
+        traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_CERES_interp_Dec-Feb_2017-2022"
 
     start = time.time()
 
