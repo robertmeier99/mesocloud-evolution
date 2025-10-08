@@ -7,13 +7,14 @@ import xarray as xr
 import time 
 import glob
 import os
+import gc
 import resource
 from line_profiler import LineProfiler
 
 
 def main():
     # set inputs
-    remote = True
+    remote = False
     area_weighted = False
     save_freq = 1000 # save after every 1000 trajectories
     framesize = 5
@@ -26,7 +27,7 @@ def main():
         traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_CERES_interp_Dec-Feb_2017-2022"
     else:
         data_path = "/home/rmeier1/PhD/Datasets/CERES/CERES_DJF_17-22.nc"
-        traj_dir = "/home/rmeier1/PhD/Datasets/interp_trajectories/"
+        traj_dir = "/home/rmeier1/PhD/Datasets/interp_data/"
         save_dir = "/home/rmeier1/PhD/Datasets/CERES/"
         traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_CERES_interp_Dec-Feb_2017-2022"
 
@@ -39,7 +40,7 @@ def main():
 
     # get datasets
     CERES_ds = xr.open_dataset(data_path)
-    trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc") 
+    trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
 
     # define which variables to average
     mean_vars = list(CERES_ds)[:-2]
@@ -85,23 +86,36 @@ def compute_CERES_along_traj(traj_ds,CERES_ds,mean_vars,area_weighted,framesize,
         CERES_traj[var + "_spatial_mean"] = np.full((N_Timesteps,N_Trajectories),np.nan)
 
     for i in range(N_Trajectories):
+        print(f"{np.round(i/N_Trajectories*100)} % complete",end="\r")
         traj = traj_ds.isel(N_Trajectories=i)
 
         traj_time = traj.datetime_UTC.values
         traj_lon = traj.longitude.values
         traj_lat = traj.latitude.values
 
+        # load seasonal subset of CERES data
         if i==0:
             min_time = np.nanmin(traj_time)
-            max_time = np.nanmax(traj_time) + np.timedelta64(200,"D")
+            max_time = np.nanmax(traj_time) + np.timedelta64(150,"D")
             CERES_sub = CERES_ds.sel(time=slice(min_time,max_time)).load()
-        elif traj_time[-1] > max_time:
+        elif np.nanmax(traj_time) > max_time:
+            # Delete old subset
+            del CERES_sub
+            gc.collect()
+            # Load new subset
             min_time = np.nanmin(traj_time)
-            max_time = np.nanmax(traj_time) + np.timedelta64(200,"D")
+            max_time = np.nanmax(traj_time) + np.timedelta64(150,"D")
+            CERES_sub = CERES_ds.sel(time=slice(min_time,max_time)).load()
+        elif np.nanmin(traj_time) < min_time:
+            # Delete old subset
+            del CERES_sub
+            gc.collect()
+            # Load new subset
+            min_time = np.nanmin(traj_time)
+            max_time = np.nanmax(traj_time) + np.timedelta64(150,"D")
             CERES_sub = CERES_ds.sel(time=slice(min_time,max_time)).load()
 
         for j in range(len(traj_time)):
-            print(f"time step {j}")
 
             # leave NaN, if 5x5 frame is outside of the data region
             if (traj_lon[j] < -67.5)+(traj_lon[j] > -12.5)+(traj_lat[j] < 2.5)+(traj_lat[j] > 37.5) > 0:
