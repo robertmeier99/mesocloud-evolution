@@ -19,7 +19,7 @@ def main():
     
     start = time.time()
 
-    file_name = "Lagrangian_CERES_data_rounded_N.nc"
+    file_name = "Lagrangian_CERES_data_corrected.nc"
     norm_time_file_name = "CERES_data_with_norm_time.nc"
     interp_file_name = "diurnal_CERES_data.nc"
 
@@ -39,8 +39,7 @@ def main():
         else:
             file_path = "/home/rmeier1/PhD/Datasets/Catalogue_upload/" + file_name
         
-        cloudmetric_ds = xr.open_dataset(file_path)
-        cloudmetric_ds = cloudmetric_ds
+        cloudmetric_ds = xr.open_dataset(file_path).dropna(dim="N_Trajectories",how="all")
 
         # add normalized time to dataset 
         print("Adding normalized time...")
@@ -105,12 +104,18 @@ def add_norm_time(ds):
     return ds
 
 
-def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True):
+def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True,delta_t_thresh=0.1):
     """
     Compute interpolated dataset variables on normalized times of given resolution.
     """
+    # find time dim name
+    dims = list(ds.dims)
+    time_dim_idx = np.argwhere([("Time" in dim) or ("time" in dim) for dim in dims])[0,0]
+    time_dim_name = dims[time_dim_idx]
+
     # get sizes of interpolated dataset
-    day_id_unique = np.unique(ds.day_id.values.T)[:-1]
+    day_id_unique = np.unique(ds.day_id.values.T)
+    day_id_unique = day_id_unique[day_id_unique != "NaNDNaN"]
     N_days = len(day_id_unique)
 
     t_interp_day = np.arange(0,1,t_res)
@@ -136,7 +141,7 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True):
 
     # iterate through trajectories
     for n in range(ds.sizes["N_Trajectories"]):
-        ts = ds.isel(N_Trajectories=n).dropna(dim="Time",how="all")
+        ts = ds.isel(N_Trajectories=n).dropna(dim=time_dim_name,how="all")
 
         # get 1D time coordinates
         norm_time = ts.norm_time.values
@@ -145,7 +150,7 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True):
 
         # compute normalized time of trajectory (monotone increase) and interpolation range
         traj_norm_time = norm_time + day_of_traj
-        nan_stop = np.argwhere(np.diff(traj_norm_time)>0.1)
+        nan_stop = np.argwhere(np.diff(traj_norm_time)>delta_t_thresh)
         if len(nan_stop>0):
             nan_stop = traj_norm_time[nan_stop[0][0]]+t_res
             t_interp = np.round(np.arange(np.ceil(np.nanmin(traj_norm_time)/t_res)*t_res,nan_stop,t_res),4)
@@ -177,7 +182,7 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True):
         
         elif interp_method == "xarray":
             # traj_norm_time to ts
-            ts = ts.assign_coords({"Time":(["Time"],traj_norm_time)})
+            ts = ts.assign_coords({time_dim_name:([time_dim_name],traj_norm_time)})
 
             # interpolate timeseries
             ts_interp = ts.interp(Time=t_interp)
