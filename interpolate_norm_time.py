@@ -1,6 +1,7 @@
 import xarray as xr
 import pandas as pd
 import numpy as np
+from scipy.interpolate import PchipInterpolator, make_interp_spline
 from numba import njit, prange
 import matplotlib.pyplot as plt
 from astral import Observer
@@ -14,14 +15,14 @@ def main():
     work_remote = False
     has_norm_time = False
     has_mask = False
-    t_res = 0.04
-    interp_method = "numpy"
+    t_res = 0.1
+    interp_method = "scipy"
     
     start = time.time()
 
-    file_name = "Lagrangian_CERES_data_corrected.nc"
-    norm_time_file_name = "CERES_data_with_norm_time.nc"
-    interp_file_name = "diurnal_CERES_data.nc"
+    file_name = "Lagrangian_CCF_data.nc"
+    norm_time_file_name = "CCF_data_with_norm_time_corr.nc"
+    interp_file_name = "diurnal_CCF_data.nc"
 
     if has_norm_time:
         # load cloudmetrics with normalized time
@@ -56,7 +57,7 @@ def main():
 
     # interpolate dataset on normalized time
     print("Interpolating...")
-    cloudmetric_ds_interp = interpolate_dataset(cloudmetric_ds,interp_method,t_res,has_mask)
+    cloudmetric_ds_interp = interpolate_dataset(cloudmetric_ds,interp_method,t_res,has_mask,delta_t_thresh=0.15)
 
     # saving dataset 
     if work_remote:
@@ -108,6 +109,10 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True,delta_t_thresh
     """
     Compute interpolated dataset variables on normalized times of given resolution.
     """
+    # check if 1 is integer multiple of time resolution
+    if 100%(t_res*100) != 0:
+        raise ValueError("1 needs to be integer multiple of t_res!")
+
     # find time dim name
     dims = list(ds.dims)
     time_dim_idx = np.argwhere([("Time" in dim) or ("time" in dim) for dim in dims])[0,0]
@@ -118,7 +123,7 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True,delta_t_thresh
     day_id_unique = day_id_unique[day_id_unique != "NaNDNaN"]
     N_days = len(day_id_unique)
 
-    t_interp_day = np.arange(0,1,t_res)
+    t_interp_day = linspace_step_inside(0,1,t_res,periodic=True)
     N_norm_time = len(t_interp_day)
 
     # initialize dictionary of coordinates
@@ -153,9 +158,9 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True,delta_t_thresh
         nan_stop = np.argwhere(np.diff(traj_norm_time)>delta_t_thresh)
         if len(nan_stop>0):
             nan_stop = traj_norm_time[nan_stop[0][0]]+t_res
-            t_interp = np.round(np.arange(np.ceil(np.nanmin(traj_norm_time)/t_res)*t_res,nan_stop,t_res),4)
+            t_interp = np.round(linspace_step_inside(np.nanmin(traj_norm_time),nan_stop,t_res),2)
         else:
-            t_interp = np.round(np.arange(np.ceil(np.nanmin(traj_norm_time)/t_res)*t_res,np.nanmax(traj_norm_time),t_res),4)
+            t_interp = np.round(linspace_step_inside(np.nanmin(traj_norm_time),np.nanmax(traj_norm_time),t_res),2)
 
         # compute indices for saving
         day_idx = np.searchsorted(np.unique(day_of_traj),t_interp.astype(int))
@@ -180,6 +185,23 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True,delta_t_thresh
                 else:                               # mask independent variables
                     var_dict[var_name][1][norm_time_idx,day_id_indices] = np.interp(t_interp,traj_norm_time,ts[var_name])
         
+        elif interp_method == "scipy":
+            # interpolate metrics and lat/lon
+            for coord_name in ["longitude","latitude"]:
+                try:
+                    coord_intp = pchip_interp(t_interp,traj_norm_time,ts[coord_name])
+                    coords_dict[coord_name][1][norm_time_idx,day_id_indices] = coord_intp
+                except ValueError:
+                    print(len(norm_time_idx),len(day_id_indices),len(coord_intp),len(t_interp))
+
+            # interpolate variables
+            for var_name in list(ds):
+                if len(ds[var_name].shape) > 2:     # mask dependent variables
+                    var_dict[var_name][1][norm_time_idx,day_id_indices,0] = pchip_interp(t_interp,traj_norm_time,ts[var_name].isel(Mask=0))
+                    var_dict[var_name][1][norm_time_idx,day_id_indices,1] = pchip_interp(t_interp,traj_norm_time,ts[var_name].isel(Mask=1))
+                else:                               # mask independent variables
+                    var_dict[var_name][1][norm_time_idx,day_id_indices] = pchip_interp(t_interp,traj_norm_time,ts[var_name])
+        
         elif interp_method == "xarray":
             # traj_norm_time to ts
             ts = ts.assign_coords({time_dim_name:([time_dim_name],traj_norm_time)})
@@ -194,7 +216,7 @@ def interpolate_dataset(ds,interp_method,t_res=0.01,has_mask=True,delta_t_thresh
                 var_dict[var_name][1][norm_time_idx,day_id_indices] = ts_interp[var_name].values
 
         else:
-            raise ValueError("Give interpolation method numpy or xarray.")
+            raise ValueError("Give interpolation method numpy, scipy or xarray.")
 
         print(f"Interpolation: {np.round(n/ds.sizes['N_Trajectories']*100,1)}% complete",end="\r")
 
@@ -256,17 +278,21 @@ def find_sunset_sunrise_bounds(lon,lat,datetime_UTC):
             # compute previous sunset and subsequent sunrise in UTC
             sunrise, sunset = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],date_UTC[j,i])
 
-            if sunset > sunrise:            # sunset not past UTC date boundary yet
+            if sunset > sunrise:            # sunset not past UTC date boundary yet (this should always be the case now)
                 if datetime_UTC[j,i] < sunset:       # time before sunset
+                    next_sunset[j,i] = sunset
                     sunset = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],date_before[j,i])[1]
                 else:                           # time past sunset
-                    sunrise = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],date_after[j,i])[0]
+                    sunrise, next_sunset[j,i] = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],date_after[j,i])
 
             else:                           # sunset past UTC date boundary
+                print("Sunset before sunrise!")
                 if datetime_UTC[j,i] < sunset:       # time before sunset
                     sunrise, sunset = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],date_before[j,i])
+                    next_sunset[j,i] = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],date_UTC[j,i])[1]
+                else:
+                    next_sunset[j,i] = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],date_after[j,i])[1]
 
-            next_sunset[j,i] = sunrise_sunset_UTC_time(lon[j,i],lat[j,i],sunset.astype("datetime64[D]") + np.timedelta64(1,"D"))[1]
             prev_sunset[j,i] = sunset
             subs_sunrise[j,i] = sunrise
 
@@ -293,7 +319,61 @@ def sunrise_sunset_UTC_time(lon,lat,date_UTC):
 
     return sunrise_UTC, sunset_UTC
 
+def pchip_interp(t_interp,t_data,data):
+    """
+    Monotone cubic spline interpolation using PchipInterpolator from Scipy. 
 
+    Input:
+    -----------------------------------------------------------------------------
+    - t_interp              times to interpolate on
+    - t_data                independent variable (e.g. times with available data)
+    - data                  dependent variable
+    
+    Output:
+    -----------------------------------------------------------------------------
+    - interp_data           interpolated data
+    """
+    # make sure data has no NaN
+    t_data = t_data[np.isfinite(data)]
+    data = data[np.isfinite(data)]
+
+    # interpolate
+    spline = PchipInterpolator(t_data,data)
+    return spline(t_interp)
+
+def make_spline_interp(t_interp,t_data,data,k=3,bc_type=None):
+    """
+    Spline interpolation using make_interp_spline from Scipy. 
+
+    Input:
+    -----------------------------------------------------------------------------
+    - t_interp              times to interpolate on
+    - t_data                independent variable (e.g. times with available data)
+    - data                  dependent variable
+    - k                     B-spline degree (default is cubic)
+    - bc_type               type of boundary condition (default not-a-knot)
+    
+    Output:
+    -----------------------------------------------------------------------------
+    - interp_data           interpolated data
+    """
+    # make sure data has no NaN
+    t_data = t_data[np.isfinite(data)]
+    data = data[np.isfinite(data)]
+
+    # interpolate
+    spline = make_interp_spline(t_data,data,k=k,bc_type=bc_type)
+    return spline(t_interp)
+
+def linspace_step_inside(start,stop,step,periodic=False):
+    new_start = np.ceil(start/step)*step
+    new_stop = np.floor(stop/step)*step
+    num_points = int(np.round((new_stop-new_start)/step)) + 1
+
+    if periodic:
+        return np.linspace(new_start,new_stop-step,num_points-1)
+    else:
+        return np.linspace(new_start,new_stop,num_points)
 
 if __name__ == "__main__":
     main()
