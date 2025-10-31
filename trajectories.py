@@ -31,17 +31,19 @@ def main():
         if data_source == "GOES":
             goes_ref_ds = get_goes_ref_ds(["2017","2018","2019","2020","2021","2022"],[12,1,2])
             goes_ref_ds.to_netcdf(ref_dir + "goes_ref_ds.nc")
+            data_ref_time = goes_ref_ds.time.values
         elif data_source == "ERA5":
-            era_ref_times = get_era_ref_times(np.arange(2017,2023))
+            data_ref_time = get_era_ref_times(np.arange(2017,2023))
     else:
         goes_ref_ds = xr.open_dataset(ref_dir + "goes_ref_ds.nc")
+        data_ref_time = goes_ref_ds.time.values
 
     if add_dt:
         print(str(datetime.now())+": Adding UTC datetime to trajectories...")
         trajects = add_datetime(trajects)
 
     print(str(datetime.now())+": Interpolate trajectories...")
-    trajects = interpolate_trajects(trajects,goes_ref_ds)
+    trajects = interpolate_trajects(trajects,data_ref_time)
     trajects.to_netcdf(traj_dir + traj_file_name + "_intp.nc")
 
 
@@ -265,7 +267,7 @@ def corr_t_round_err(years,days,hours,mins,secs):
 
     return years, days, hours, mins, secs
 
-def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
+def interpolate_trajects(trajects,data_ref_time,N_timesteps=960):
     """
     Interpolates trajectories linearly from 1 hourly trajectories onto the 10/15-min GOES images.
     """
@@ -280,9 +282,6 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
     datetime_UTC = np.full((N_timesteps,N_Trajectories),np.nan).astype("datetime64[ns]")
     sst = np.full((N_timesteps,N_Trajectories),np.nan)
     skt = np.full((N_timesteps,N_Trajectories),np.nan)
-
-    # get central time of each GOES scan
-    central_img_time = goes_ref_ds.time.values
     
     for i in range(N_Trajectories):
         # select trajectory 
@@ -304,16 +303,16 @@ def interpolate_trajects(trajects,goes_ref_ds,N_timesteps=960):
         traj_skt = traj_skt[np.isfinite(traj_skt)]
 
         # interpolate trajectory onto GOES scantimes
-        traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,central_img_time)
+        traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,data_ref_time)
 
         datetime_UTC[:len(traj_interp[0]),i] = traj_interp[0]
         longitudes[:len(traj_interp[1]),i] = traj_interp[1]
         latitudes[:len(traj_interp[2]),i] = traj_interp[2]
 
         # interpolate sst onto GOES scantimes (cubic spline interpolation)
-        t_interp = central_img_time[(central_img_time>traj_sst_times[0])*(central_img_time<traj_sst_times[-1])]
+        t_interp = data_ref_time[(data_ref_time>traj_sst_times[0])*(data_ref_time<traj_sst_times[-1])]
         sst[:len(t_interp),i] = spline_interp(traj_sst_times,traj_sst,t_interp)
-        t_interp = central_img_time[(central_img_time>traj_skt_times[0])*(central_img_time<traj_skt_times[-1])]
+        t_interp = data_ref_time[(data_ref_time>traj_skt_times[0])*(data_ref_time<traj_skt_times[-1])]
         skt[:len(t_interp),i] = spline_interp(traj_skt_times,traj_skt,t_interp)
 
     ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
