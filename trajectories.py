@@ -21,14 +21,18 @@ def main():
     traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2017-2022_datetime"
     generate_ref_ds = False
     add_dt = False
+    data_source = "GOES" # "ERA5"
 
     # get datasets
     trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
 
-    if generate_ref_ds:
+    if generate_ref_ds or data_source != "GOES":
         print(str(datetime.now())+": Generating reference dataset...")
-        goes_ref_ds = get_goes_ref_ds(["2017","2018","2019","2020","2021","2022"],[12,1,2])
-        goes_ref_ds.to_netcdf(ref_dir + "goes_ref_ds.nc")
+        if data_source == "GOES":
+            goes_ref_ds = get_goes_ref_ds(["2017","2018","2019","2020","2021","2022"],[12,1,2])
+            goes_ref_ds.to_netcdf(ref_dir + "goes_ref_ds.nc")
+        elif data_source == "ERA5":
+            era_ref_times = get_era_ref_times(np.arange(2017,2023))
     else:
         goes_ref_ds = xr.open_dataset(ref_dir + "goes_ref_ds.nc")
 
@@ -381,6 +385,30 @@ def spline_interp(t_data,data,t_interp):
     """
     cs = CubicSpline(t_data,data)
     return cs(t_interp)
+
+def get_era_ref_times(years):
+    """
+    Generate array of times with ERA5 data from given years.
+    Input:
+    ---------------------------------------------------------------------------------------
+    - years:            List of int giving the years of interest
+
+    Output:
+    ---------------------------------------------------------------------------------------
+    - era_ref_times     Array of UTC times of ERA 5 data
+    """
+    if isinstance(years, int):  # allow single int
+        years = [years]
+
+    hours = []
+
+    for y in years:
+        # append hours
+        hours.append(np.arange(f"{y}-01-01", f"{y}-03-05", dtype="datetime64[h]"))
+        hours.append(np.arange(f"{y}-11-27", f"{y+1}-01-01", dtype="datetime64[h]"))
+
+    return np.sort(np.concatenate(hours)).astype("datetime64[ns]")
+
 
 def get_goes_ref_ds(years,months,margin=4):
     """
