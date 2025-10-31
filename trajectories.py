@@ -16,12 +16,13 @@ from utils import where_both, dropna, generate_globsearch_string, generate_url_l
 
 def main():
     # input directory
-    traj_dir = "~/Data/Trajectories/"
+    traj_dir = "~/PhD/Datasets/orig_trajectories/"
     ref_dir = "~/Data/goes16_reference/"
-    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2017-2022_datetime"
-    generate_ref_ds = False
-    add_dt = False
-    data_source = "GOES" # "ERA5"
+    traj_file_name = "NAtl_Trajectories_Mid_Start_925hPa_1hrLocalInterp_ERA5_vars_Dec-Feb_2017-2022"
+    generate_ref_ds = True
+    add_dt = True
+    int_skt_sst = False     # Interpolation of skin temperature and sst
+    data_source = "ERA5" # "GOES"
 
     # get datasets
     trajects = xr.open_dataset(traj_dir + traj_file_name + ".nc")
@@ -33,7 +34,7 @@ def main():
             goes_ref_ds.to_netcdf(ref_dir + "goes_ref_ds.nc")
             data_ref_time = goes_ref_ds.time.values
         elif data_source == "ERA5":
-            data_ref_time = get_era_ref_times(np.arange(2017,2023))
+            data_ref_time = get_era_ref_times(np.arange(2016,2023))
     else:
         goes_ref_ds = xr.open_dataset(ref_dir + "goes_ref_ds.nc")
         data_ref_time = goes_ref_ds.time.values
@@ -43,7 +44,7 @@ def main():
         trajects = add_datetime(trajects)
 
     print(str(datetime.now())+": Interpolate trajectories...")
-    trajects = interpolate_trajects(trajects,data_ref_time)
+    trajects = interpolate_trajects(trajects,data_ref_time,int_skt_sst)
     trajects.to_netcdf(traj_dir + traj_file_name + "_intp.nc")
 
 
@@ -267,9 +268,10 @@ def corr_t_round_err(years,days,hours,mins,secs):
 
     return years, days, hours, mins, secs
 
-def interpolate_trajects(trajects,data_ref_time,N_timesteps=960):
+def interpolate_trajects(trajects,data_ref_time,int_skt_sst=False,N_timesteps=960):
     """
-    Interpolates trajectories linearly from 1 hourly trajectories onto the 10/15-min GOES images.
+    Interpolates trajectories linearly from 1 hourly trajectories onto the 10/15-min GOES images
+    or other given data reference times.
     """
     
     # Get trajectory numbers and amount of them
@@ -292,15 +294,16 @@ def interpolate_trajects(trajects,data_ref_time,N_timesteps=960):
         traj_lons = traject.longitude.values
         traj_lats = traject.latitude.values
 
-        # get trajectory sst
-        traj_sst = traject.SST.values
-        traj_sst_times = traject.datetime_UTC.values[np.isfinite(traj_sst)]
-        traj_sst = traj_sst[np.isfinite(traj_sst)]
-        
-        # get trajectory skt
-        traj_skt = traject.skt.values
-        traj_skt_times = traject.datetime_UTC.values[np.isfinite(traj_skt)]
-        traj_skt = traj_skt[np.isfinite(traj_skt)]
+        if int_skt_sst:
+            # get trajectory sst
+            traj_sst = traject.SST.values
+            traj_sst_times = traject.datetime_UTC.values[np.isfinite(traj_sst)]
+            traj_sst = traj_sst[np.isfinite(traj_sst)]
+            
+            # get trajectory skt
+            traj_skt = traject.skt.values
+            traj_skt_times = traject.datetime_UTC.values[np.isfinite(traj_skt)]
+            traj_skt = traj_skt[np.isfinite(traj_skt)]
 
         # interpolate trajectory onto GOES scantimes
         traj_interp = temp_interp_2D(traj_times,traj_lons,traj_lats,data_ref_time)
@@ -309,19 +312,27 @@ def interpolate_trajects(trajects,data_ref_time,N_timesteps=960):
         longitudes[:len(traj_interp[1]),i] = traj_interp[1]
         latitudes[:len(traj_interp[2]),i] = traj_interp[2]
 
-        # interpolate sst onto GOES scantimes (cubic spline interpolation)
-        t_interp = data_ref_time[(data_ref_time>traj_sst_times[0])*(data_ref_time<traj_sst_times[-1])]
-        sst[:len(t_interp),i] = spline_interp(traj_sst_times,traj_sst,t_interp)
-        t_interp = data_ref_time[(data_ref_time>traj_skt_times[0])*(data_ref_time<traj_skt_times[-1])]
-        skt[:len(t_interp),i] = spline_interp(traj_skt_times,traj_skt,t_interp)
+        if int_skt_sst:
+            # interpolate sst onto GOES scantimes (cubic spline interpolation)
+            t_interp = data_ref_time[(data_ref_time>traj_sst_times[0])*(data_ref_time<traj_sst_times[-1])]
+            sst[:len(t_interp),i] = spline_interp(traj_sst_times,traj_sst,t_interp)
+            t_interp = data_ref_time[(data_ref_time>traj_skt_times[0])*(data_ref_time<traj_skt_times[-1])]
+            skt[:len(t_interp),i] = spline_interp(traj_skt_times,traj_skt,t_interp)
 
-    ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
-                                    longitude=(["Time","N_Trajectories"],longitudes),
-                                    latitude=(["Time","N_Trajectories"],latitudes),
-                                    datetime_UTC=(["Time","N_Trajectories"],datetime_UTC),
-                                    sst=(["Time","N_Trajectories"],sst),
-                                    skt=(["Time","N_Trajectories"],skt)),
-                      attrs=dict(description="Trajectory data interpolated on GOES images"))
+    if int_skt_sst:
+        ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
+                                        longitude=(["Time","N_Trajectories"],longitudes),
+                                        latitude=(["Time","N_Trajectories"],latitudes),
+                                        datetime_UTC=(["Time","N_Trajectories"],datetime_UTC),
+                                        sst=(["Time","N_Trajectories"],sst),
+                                        skt=(["Time","N_Trajectories"],skt)),
+                        attrs=dict(description="Trajectory data interpolated on GOES images"))
+    else: 
+        ds = xr.Dataset(data_vars=dict(Trajectory_N=(["N_Trajectories"],Trajectory_N),
+                                        longitude=(["Time","N_Trajectories"],longitudes),
+                                        latitude=(["Time","N_Trajectories"],latitudes),
+                                        datetime_UTC=(["Time","N_Trajectories"],datetime_UTC)),
+                        attrs=dict(description="Trajectory data interpolated on GOES images"))
 
     return ds.dropna(dim="Time",how="all")
 
