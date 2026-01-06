@@ -65,26 +65,26 @@ def filter_out_loops(trajects):
     ccw_loops_idx = []
     
     # get dimension names
-    time_dim, traj_dim = list(trajects.dims)[:2]
-    if not time_dim in ["Time","Hours_Local_Time","Norm_Time"]:
-        if traj_dim in ["Time","Hours_Local_Time","Norm_Time"]:
-            traj_dim, time_dim = list(trajects.dims)[:2]
-        else: 
-            raise NameError("Time dimension not one of [Hours_Local_Time, Time, Norm_Time].")
-        
+    dims = list(trajects.dims)[:2]
+
+    time_dim = next((d for d in dims if "time" in d.lower()), None)
+    if time_dim is None:
+        raise NameError("Time dimension not found.")
+    
+    traj_dim = next(d for d in dims if d!= time_dim)
+
+    # print for debugging
+    print(f"time_dim={time_dim}, traj_dim={traj_dim}")
+
+    # get number of trajectories / days    
     N_trajects = trajects.sizes[traj_dim]
     
     for i in range(N_trajects):
-        if traj_dim == "N_Trajectories":
-            traject = trajects.isel(N_Trajectories=i).dropna(dim=time_dim,how="all")
-        elif traj_dim == "Day_ID":
-            traject = trajects.isel(Day_ID=i).dropna(dim=time_dim,how="all")
-        else:
-            raise NameError("Trajectory dimension not one of [N_Trajectories, Day_ID].")
+        traject = trajects.isel({traj_dim: i})
         
         # get lat lon tendencies
-        lat = traject.latitude.values
-        lon = traject.longitude.values
+        lat = traject.latitude.dropna(dim=time_dim,how="all").values
+        lon = traject.longitude.dropna(dim=time_dim,how="all").values
         lat_tendency = np.diff(lat)
         lon_tendency = np.diff(lon)
         
@@ -102,9 +102,9 @@ def filter_out_loops(trajects):
                 no_loops_idx.append(i)
                 
     # filter trajectories by index
-    trajects_loop_free = trajects.isel(N_Trajectories=no_loops_idx)
-    trajects_loop_cw = trajects.isel(N_Trajectories=cw_loops_idx)
-    trajects_loop_ccw = trajects.isel(N_Trajectories=ccw_loops_idx)
+    trajects_loop_free = trajects.isel({traj_dim: no_loops_idx})
+    trajects_loop_cw = trajects.isel({traj_dim: cw_loops_idx})
+    trajects_loop_ccw = trajects.isel({traj_dim: ccw_loops_idx})
 
     return trajects_loop_free, trajects_loop_cw, trajects_loop_ccw
 
