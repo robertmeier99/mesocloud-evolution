@@ -68,10 +68,23 @@ def filter_out_loops(trajects):
     cw_loops_idx = []
     ccw_loops_idx = []
     
-    N_trajects = trajects.sizes['N_Trajectories']
+    # get dimension names
+    time_dim, traj_dim = list(trajects.dims)[:2]
+    if not time_dim in ["Time","Hours_Local_Time","Norm_Time"]:
+        if traj_dim in ["Time","Hours_Local_Time","Norm_Time"]:
+            traj_dim, time_dim = list(trajects.dims)[:2]
+        else: 
+            raise NameError("Time dimension not one of [Hours_Local_Time, Time, Norm_Time].")
+        
+    N_trajects = trajects.sizes[traj_dim]
     
     for i in range(N_trajects):
-        traject = trajects.isel(N_Trajectories=i).dropna(dim="Hours_Local_Time",how="all")
+        if traj_dim == "N_Trajectories":
+            traject = trajects.isel(N_Trajectories=i).dropna(dim=time_dim,how="all")
+        elif traj_dim == "Day_ID":
+            traject = trajects.isel(Day_ID=i).dropna(dim=time_dim,how="all")
+        else:
+            raise NameError("Trajectory dimension not one of [N_Trajectories, Day_ID].")
         
         # get lat lon tendencies
         lat = traject.latitude.values
