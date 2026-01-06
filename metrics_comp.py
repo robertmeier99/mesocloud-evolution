@@ -21,7 +21,7 @@ from line_profiler import LineProfiler
 import warnings
 import traceback
 
-from utils import extract_frame, get_centered_window
+from .utils import extract_frame, get_centered_window
 
 def main():
     # set inputs

@@ -3,16 +3,12 @@
 Trajectory preprocessing functions for filtering and interpolating ERA5 trajectories.
 -------------------------------------------------------------------------------------------
 """
-
-import sys
-sys.path.append("..")
-
 import numpy as np
 import xarray as xr
 from scipy.interpolate import CubicSpline
 from datetime import datetime,timedelta
 
-from utils import where_both, dropna, generate_globsearch_string, generate_url_list
+from .utils import where_both, dropna, generate_globsearch_string, generate_url_list
 
 def main():
     # input directory
